@@ -147,7 +147,9 @@ wire         ddfseq_match;
 // ECS: DDFSTOP = $E4 display data fetch not stopped
 
 
-always @ (posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires a named block
+// when local variables are declared inside an always block (Synth 8-2576).
+always @ (posedge clk) begin : hde_blk
 	reg [8:0] best_hdiwstrt, cur_hdiwstrt, prev_hdiwstrt;
 	reg [8:0] best_hdiwstop, cur_hdiwstop, prev_hdiwstop;
 	reg [10:0] d_hde;

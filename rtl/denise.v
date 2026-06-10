@@ -69,8 +69,18 @@ parameter COLORBASE = 9'h180;
 reg    [8:0] hpos;        // horizontal beamcounter
 reg    [3:0] l_bpu;      // latched bitplane enable
 
-reg    [8:0] hdiwstrt;      // horizontal display window start position
-reg    [8:0] hdiwstop;      // horizontal display window stop position
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: hdiwstrt/hdiwstop were
+// single 9-bit regs each driven by two separate always blocks (bits [7:0] and
+// bit [8]) - multi-driven variables that Vivado rejects. Split into one
+// register per driving process and recombine with continuous assigns.
+//reg    [8:0] hdiwstrt;      // horizontal display window start position (original)
+//reg    [8:0] hdiwstop;      // horizontal display window stop position (original)
+reg    [7:0] hdiwstrt_l;    // horizontal display window start position, H7-H0
+reg          hdiwstrt_h8;   // horizontal display window start position, H8
+wire   [8:0] hdiwstrt = {hdiwstrt_h8, hdiwstrt_l};
+reg    [7:0] hdiwstop_l;    // horizontal display window stop position, H7-H0
+reg          hdiwstop_h8;   // horizontal display window stop position, H8
+wire   [8:0] hdiwstop = {hdiwstop_h8, hdiwstop_l};
 
 wire  [8:1] bpldata_out;    // bitplane serial data out from shifters
 wire  [8:1] bpldata;      // raw bitplane serial video data
@@ -261,33 +271,37 @@ end
 // DIWSTART and DIWSTOP registers (vertical and horizontal limits of display window)
 
 // HDIWSTRT
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to the split
+// registers hdiwstrt_l/hdiwstrt_h8 (see declaration above).
 always @(posedge clk)
   if (clk7_en) begin
     if (reg_address_in[8:1]==DIWSTRT[8:1])
-      hdiwstrt[7:0] <= data_in[7:0];
+      hdiwstrt_l[7:0] <= data_in[7:0];
   end
 
 always @(posedge clk)
   if (clk7_en) begin
     if (reg_address_in[8:1]==DIWSTRT[8:1])
-      hdiwstrt[8] <= 1'b0; // diwstop H9 = 0
+      hdiwstrt_h8 <= 1'b0; // diwstop H9 = 0
     else if (reg_address_in[8:1]==DIWHIGH[8:1] && ecs)
-      hdiwstrt[8] <= data_in[5];
+      hdiwstrt_h8 <= data_in[5];
   end
 
 // HDIWSTOP
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to the split
+// registers hdiwstop_l/hdiwstop_h8 (see declaration above).
 always @(posedge clk)
   if (clk7_en) begin
     if (reg_address_in[8:1]==DIWSTOP[8:1])
-      hdiwstop[7:0] <= data_in[7:0];
+      hdiwstop_l[7:0] <= data_in[7:0];
   end
 
 always @(posedge clk)
   if (clk7_en) begin
     if (reg_address_in[8:1]==DIWSTOP[8:1])
-      hdiwstop[8] <= 1'b1; // diwstop H8 = 1
+      hdiwstop_h8 <= 1'b1; // diwstop H8 = 1
     else if (reg_address_in[8:1]==DIWHIGH[8:1] && ecs)
-      hdiwstop[8] <= data_in[13];
+      hdiwstop_h8 <= data_in[13];
   end
 
 assign deniseid_out = reg_address_in[8:1]==DENISEID[8:1] ? aga ? 16'h00f8 : ecs ? 16'hfffc : 16'hffff : 16'h0000;

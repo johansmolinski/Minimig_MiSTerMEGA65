@@ -18,12 +18,23 @@ module agnus_blitter_fill
 reg		[15:0]carry;
 
 //generate all fill carry's
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: 'carry' was driven from two
+// separate combinational always blocks (bit [0] in one, bits [15:1] in the
+// other) - a multi-driven variable that Vivado rejects. Merged into a single
+// always block; the produced logic is identical.
 integer j;
+always @(*) begin
+	carry[0] = fci ^ in[0];		//least significant bit
+	for (j=1;j<=15;j=j+1)		//rest of bits
+		carry[j] = carry[j-1] ^ in[j];
+end
+/* original MiSTer code:
 always @(fci or in[0])//least significant bit
-	carry[0] = fci ^ in[0];		
+	carry[0] = fci ^ in[0];
 always @(in or carry)//rest of bits
 	for (j=1;j<=15;j=j+1)
 		carry[j] = carry[j-1] ^ in[j];
+*/
 
 //fill carry output
 assign fco = carry[15];

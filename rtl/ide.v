@@ -246,7 +246,9 @@ wire       io_done = (blk_size && io_cnt >= blk_size);
 reg [13:0] io_cnt;
 wire       io_stb = read_data_io | write_data_io;
 
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires a named block
+// when local variables are declared inside an always block (Synth 8-2576).
+always @(posedge clk) begin : io_cnt_blk
 	reg old_stb, r_32;
 	old_stb <= io_stb;
 
@@ -258,7 +260,8 @@ always @(posedge clk) begin
 end
 
 reg [13:0] mgmt_cnt;
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: named block, see above.
+always @(posedge clk) begin : mgmt_cnt_blk
 	reg old_wr, old_rd;
 	
 	old_wr <= mgmt_write;

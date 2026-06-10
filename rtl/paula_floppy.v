@@ -123,7 +123,14 @@ parameter DSKLEN  = 9'h024;
 
 //local signals
 reg  [15:0] dsksync;			//disk sync register
-reg  [15:0] dsklen;			//disk dma length, direction and enable 
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: dsklen was a single 16-bit
+// reg driven by two separate always blocks (bits [14:0] and bit [15]/DMAEN) -
+// a multi-driven variable that Vivado rejects. Split into one register per
+// driving process and recombine with a continuous assign. Semantics unchanged.
+//reg  [15:0] dsklen;			//disk dma length, direction and enable (original)
+reg  [14:0] dsklen_14_0;	//disk dma length, direction (bits 14:0)
+reg         dsklen_15;		//disk dma enable (bit 15, DMAEN)
+wire [15:0] dsklen = {dsklen_15, dsklen_14_0};
 reg   [6:0] dsktrack[3:0];	//track select
 wire  [7:0] track;
 
@@ -167,7 +174,16 @@ wire        step_ena;
 
 // drive motor control
 reg  [3:0] _sel_del;       // deleyed drive select signals for edge detection
-reg  [3:0] motor_on;       // drive motor on
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: motor_on was a single 4-bit
+// reg driven by four separate always blocks (one bit each) - a multi-driven
+// variable that Vivado rejects. Split into one register per driving process
+// and recombine with a continuous assign. Semantics unchanged.
+//reg  [3:0] motor_on;       // drive motor on (original)
+reg        motor_on_0;     // drive 0 motor on
+reg        motor_on_1;     // drive 1 motor on
+reg        motor_on_2;     // drive 2 motor on
+reg        motor_on_3;     // drive 3 motor on
+wire [3:0] motor_on = {motor_on_3, motor_on_2, motor_on_1, motor_on_0};
 
 //decoded commands
 reg        cmd_fdd;			//HPS accesses floppy drive buffer
@@ -320,39 +336,41 @@ always @(posedge clk) begin
 end
 
 //drive motor control
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to the split
+// registers motor_on_0..3 (see declaration above).
 always @(posedge clk) begin
   if (clk7_en) begin
     if (reset)
-      motor_on[0] <= 0;
+      motor_on_0 <= 0;
     else if (!_sel[0] && _sel_del[0])
-      motor_on[0] <= ~_motor;
+      motor_on_0 <= ~_motor;
   end
 end
 
 always @(posedge clk) begin
   if (clk7_en) begin
     if (reset)
-      motor_on[1] <= 0;
+      motor_on_1 <= 0;
     else if (!_sel[1] && _sel_del[1])
-      motor_on[1] <= ~_motor;
+      motor_on_1 <= ~_motor;
   end
 end
 
 always @(posedge clk) begin
   if (clk7_en) begin
     if (reset)
-      motor_on[2] <= 0;
+      motor_on_2 <= 0;
     else if (!_sel[2] && _sel_del[2])
-      motor_on[2] <= ~_motor;
+      motor_on_2 <= ~_motor;
   end
 end
 
 always @(posedge clk) begin
   if (clk7_en) begin
     if (reset)
-      motor_on[3] <= 0;
+      motor_on_3 <= 0;
     else if (!_sel[3] && _sel_del[3])
-      motor_on[3] <= ~_motor;
+      motor_on_3 <= ~_motor;
   end
 end
 
@@ -407,14 +425,16 @@ always @(posedge clk) begin
 end
 
 //disk length register
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to the split
+// registers dsklen_14_0/dsklen_15 (see declaration above).
 always @(posedge clk) begin
   if (clk7_en) begin
   	if (reset)
-  		dsklen[14:0] <= 0;
+  		dsklen_14_0[14:0] <= 0;
   	else if (reg_address_in[8:1]==DSKLEN[8:1])
-  		dsklen[14:0] <= data_in[14:0];
+  		dsklen_14_0[14:0] <= data_in[14:0];
   	else if (fifo_wr)//decrement length register
-  		dsklen[13:0] <= dsklen[13:0] - 14'd1;
+  		dsklen_14_0[13:0] <= dsklen[13:0] - 14'd1;
   end
 end
 
@@ -422,11 +442,11 @@ end
 always @(posedge clk) begin
   if (clk7_en) begin
   	if (reset)
-  		dsklen[15] <= 0;
+  		dsklen_15 <= 0;
   	else if (blckint)
-  		dsklen[15] <= 0;
+  		dsklen_15 <= 0;
   	else if (reg_address_in[8:1]==DSKLEN[8:1])
-  		dsklen[15] <= data_in[15];
+  		dsklen_15 <= data_in[15];
   end
 end
 

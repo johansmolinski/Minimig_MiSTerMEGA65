@@ -37,7 +37,12 @@ module agnus_beamcounter
 	input	     [15:0] data_in,        // bus data in
 	output reg [15:0] data_out,       // bus data out
 	input       [8:1] reg_address_in, // register address inputs
-	output reg  [8:0] hpos,           // horizontal beam counter (140ns)
+	// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: hpos was an 'output reg'
+	// driven by TWO always blocks (bits [8:1] clocked, bit [0] combinational
+	// from cck) - a multi-driven variable that Vivado rejects. Split into an
+	// internal register hpos_hi[8:1] plus a continuous assign of bit 0 (see
+	// below); the port itself is now a plain output net. Semantics unchanged.
+	output      [8:0] hpos,           // horizontal beam counter (140ns)
 	output reg [10:0] vpos,           // vertical beam counter
 	output reg        _hsync,         // horizontal sync
 	output reg        _vsync,         // vertical sync
@@ -252,18 +257,26 @@ always @(posedge clk) begin
 end
 
 // horizontal beamcounter
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: bits [8:1] now live in the
+// internal register hpos_hi; bit [0] is cck combinationally (exactly what the
+// removed "always @(cck) hpos[0] = cck;" block did).
+reg [8:1] hpos_hi;
+assign hpos = {hpos_hi[8:1], cck};
+
 always @(posedge clk) begin
 	if (clk7_en) begin
 		if (reg_address_in[8:1]==VHPOSW[8:1])
-			hpos[8:1] <= data_in[7:0]; 
+			hpos_hi[8:1] <= data_in[7:0];
 		else if (end_of_line)
-			hpos[8:1] <= 0;
+			hpos_hi[8:1] <= 0;
 		else if (cck && (~ersy || |hpos[8:1]))
-			hpos[8:1] <= hpos[8:1] + 1'b1;
+			hpos_hi[8:1] <= hpos[8:1] + 1'b1;
 	end
 end
 
-always @(cck) hpos[0] = cck;
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: original second driver of
+// the hpos variable, folded into the assign above:
+//always @(cck) hpos[0] = cck;
 
 //long line signal (not used, only for better NTSC compatibility)
 reg long_line;	 // long line signal for NTSC compatibility (actually long lines are not supported yet)

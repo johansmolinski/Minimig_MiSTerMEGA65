@@ -96,7 +96,9 @@ always @(posedge clk)
   end
 
 // data register A
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires named blocks
+// when local variables are declared inside an always block (Synth 8-2576).
+always @(posedge clk) begin : datla_blk
 	reg st;
 	if(clk7_en && aen && address==DATA) st <= 1;
 	if(st & clk7n_en) begin
@@ -106,7 +108,8 @@ always @(posedge clk) begin
 end
 
 // data register B
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: named block, see above.
+always @(posedge clk) begin : datlb_blk
 	reg st;
 	if(clk7_en && aen && address==DATB) st <= 1;
 	if(st & clk7n_en) begin

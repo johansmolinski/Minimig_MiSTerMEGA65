@@ -132,7 +132,16 @@ parameter BLT_L3   = 5'b11010;
 parameter BLT_L4   = 5'b11000;
 
 //local signals
-reg		[15:0] bltcon0;			// blitter control register 0
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: bltcon0/bltcon1 were single
+// 16-bit regs driven by several independent always blocks (disjoint bit
+// ranges). Vivado treats variables written from multiple processes as
+// multi-driven. Split into one register per driving process and recombine
+// with a continuous assign. Semantics unchanged.
+//reg		[15:0] bltcon0;			// blitter control register 0 (original)
+reg		[15:12] bltcon0_ash;	// blitter control register 0, ASH part
+reg		[11:8]  bltcon0_use;	// blitter control register 0, USE part
+reg		[7:0]   bltcon0_lf;		// blitter control register 0, LF part
+wire	[15:0] bltcon0 = {bltcon0_ash, bltcon0_use, bltcon0_lf};
 wire	[3:0] ash;				// bltcon0 aliases
 wire	usea;
 wire	useb;
@@ -140,7 +149,10 @@ wire	usec;
 wire	used;
 reg		enad;					// do not disable D channel
 
-reg		[15:0] bltcon1;			// blitter control register 1
+//reg		[15:0] bltcon1;			// blitter control register 1 (original)
+reg		[15:12] bltcon1_bsh;	// blitter control register 1, BSH part
+reg		[11:0]  bltcon1_low;	// blitter control register 1, rest
+wire	[15:0] bltcon1 = {bltcon1_bsh, bltcon1_low};
 wire	[3:0] bsh;				// bltcon1 aliases
 wire	desc;					// enable descending mode (and not line mode)
 wire	line;					// enable line mode
@@ -217,27 +229,31 @@ wire	dma_ack;
 //--------------------------------------------------------------------------------------
 
 //bltcon0: ASH part
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to bltcon0_ash
+// (multi-driven variable split, see declaration above).
 always @(posedge clk)
   if (clk7_en) begin
   	if (reset)
-  		bltcon0[15:12] <= 0;
+  		bltcon0_ash[15:12] <= 0;
   	else if (enable && incash) // increment ash (line mode)
-  		bltcon0[15:12] <= bltcon0[15:12] + 4'b0001;
+  		bltcon0_ash[15:12] <= bltcon0[15:12] + 4'b0001;
   	else if (enable && decash) // decrement ash (line mode)
-  		bltcon0[15:12] <= bltcon0[15:12] - 4'b0001;
+  		bltcon0_ash[15:12] <= bltcon0[15:12] - 4'b0001;
   	else if (reg_address_in[8:1]==BLTCON0[8:1])
-  		bltcon0[15:12] <= data_in[15:12];
+  		bltcon0_ash[15:12] <= data_in[15:12];
   end
 
 assign ash[3:0] = bltcon0[15:12];
 
 //bltcon0: USE part
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to bltcon0_use
+// (multi-driven variable split, see declaration above).
 always @(posedge clk)
   if (clk7_en) begin
   	if (reset)
-  		bltcon0[11:8] <= 0;
+  		bltcon0_use[11:8] <= 0;
   	else if (reg_address_in[8:1]==BLTCON0[8:1])
-  		bltcon0[11:8] <= data_in[11:8];
+  		bltcon0_use[11:8] <= data_in[11:8];
   end
 
 // writing blitcon0 while a blit is active disables D channel (not always but it's very likely)
@@ -252,34 +268,40 @@ always @(posedge clk)
 assign {usea, useb, usec, used} = {bltcon0[11:9], bltcon0[8] & enad}; // DMA channels enable		
 
 //bltcon0: LF part
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to bltcon0_lf
+// (multi-driven variable split, see declaration above).
 always @(posedge clk)
   if (clk7_en) begin
   	if (reset)
-  		bltcon0[7:0] <= 0;
+  		bltcon0_lf[7:0] <= 0;
   	else if (reg_address_in[8:1]==BLTCON0[8:1] || reg_address_in[8:1]==BLTCON0L[8:1] && ecs)
-  		bltcon0[7:0] <= data_in[7:0];
+  		bltcon0_lf[7:0] <= data_in[7:0];
   end
 
 //bltcon1: BSH part
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to bltcon1_bsh
+// (multi-driven variable split, see declaration above).
 always @(posedge clk)
   if (clk7_en) begin
   	if (reset)
-  		bltcon1[15:12] <= 0;
+  		bltcon1_bsh[15:12] <= 0;
   	else if (enable && decbsh) // decrement bsh (line mode - texturing)
-  		bltcon1[15:12] <= bltcon1[15:12] - 4'b0001;
+  		bltcon1_bsh[15:12] <= bltcon1[15:12] - 4'b0001;
   	else if (reg_address_in[8:1]==BLTCON1[8:1])
-  		bltcon1[15:12] <= data_in[15:12];
+  		bltcon1_bsh[15:12] <= data_in[15:12];
   end
 
 assign bsh[3:0] = bltcon1[15:12];
 
 //bltcon1: the rest
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to bltcon1_low
+// (multi-driven variable split, see declaration above).
 always @(posedge clk)
   if (clk7_en) begin
   	if (reset)
-  		bltcon1[11:0] <= 0;
+  		bltcon1_low[11:0] <= 0;
   	else if (reg_address_in[8:1]==BLTCON1[8:1])
-  		bltcon1[11:0] <= data_in[11:0];
+  		bltcon1_low[11:0] <= data_in[11:0];
   end
 
 assign line = bltcon1[0]; // line mode

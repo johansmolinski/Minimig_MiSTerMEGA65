@@ -173,7 +173,10 @@ reg [15:0] data16;
 always @(posedge clk) if (clk7_en) data16 <= data_in;
 
 //bitplane buffer register for plane 1
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires named blocks
+// when local variables are declared inside an always block (Synth 8-2576);
+// applied to all 8 bitplane buffer blocks below.
+always @(posedge clk) begin : bpl1dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL1DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin
@@ -183,7 +186,7 @@ always @(posedge clk) begin
 end
 
 //bitplane buffer register for plane 2
-always @(posedge clk) begin
+always @(posedge clk) begin : bpl2dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL2DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin
@@ -193,7 +196,7 @@ always @(posedge clk) begin
 end
 
 //bitplane buffer register for plane 3
-always @(posedge clk) begin
+always @(posedge clk) begin : bpl3dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL3DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin
@@ -203,7 +206,7 @@ always @(posedge clk) begin
 end
 
 //bitplane buffer register for plane 4
-always @(posedge clk) begin
+always @(posedge clk) begin : bpl4dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL4DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin
@@ -213,7 +216,7 @@ always @(posedge clk) begin
 end
 
 //bitplane buffer register for plane 5
-always @(posedge clk) begin
+always @(posedge clk) begin : bpl5dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL5DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin
@@ -223,7 +226,7 @@ always @(posedge clk) begin
 end
 
 //bitplane buffer register for plane 6
-always @(posedge clk) begin
+always @(posedge clk) begin : bpl6dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL6DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin
@@ -233,7 +236,7 @@ always @(posedge clk) begin
 end
 
 //bitplane buffer register for plane 7
-always @(posedge clk) begin
+always @(posedge clk) begin : bpl7dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL7DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin
@@ -243,7 +246,7 @@ always @(posedge clk) begin
 end
 
 //bitplane buffer register for plane 8
-always @(posedge clk) begin
+always @(posedge clk) begin : bpl8dat_blk
 	reg st;
 	if(clk7_en && reg_address_in[8:1] == BPL8DAT[8:1]) st <= 1;
 	if(st & clk7n_en) begin

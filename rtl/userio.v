@@ -52,7 +52,12 @@ module userio
 	input             IO_STROBE,
 	output reg        IO_WAIT,
 	input      [15:0] IO_DIN,
-	output reg  [7:0] memory_config,
+	// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: memory_config was an
+	// 'output reg' driven by two separate always blocks (bits [5:0],[7] in the
+	// reset-gated config block, bit [6] in the free-running block) - a multi-
+	// driven variable that Vivado rejects. Split into internal registers (see
+	// below); the port is now a plain output net. Semantics unchanged.
+	output      [7:0] memory_config,
 	output reg  [4:0] chipset_config,
 	output reg  [3:0] floppy_config,
 	output reg  [2:0] scanline,
@@ -103,8 +108,19 @@ reg   [15:0] _sjoy2;        // synchronized joystick 2 signals
 reg   [15:0] _djoy2;        // synchronized joystick 2 signals
 reg   [15:0] potreg;        // POTGO write
 wire  [15:0] mouse0dat;     // mouse counters
-reg   [15:0] dmouse0dat;    // docking mouse counters
-reg   [15:0] dmouse1dat;    // docking mouse counters
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: dmouse0dat/dmouse1dat were
+// single 16-bit regs each driven by two separate always blocks (X counter in
+// bits [7:0], Y counter in bits [15:8]) - multi-driven variables that Vivado
+// rejects. Split into one register per driving process and recombine with
+// continuous assigns. Semantics unchanged.
+//reg   [15:0] dmouse0dat;    // docking mouse counters (original)
+//reg   [15:0] dmouse1dat;    // docking mouse counters (original)
+reg   [7:0]  dmouse0dat_l;  // docking mouse counters, X (bits 7:0)
+reg   [15:8] dmouse0dat_h;  // docking mouse counters, Y (bits 15:8)
+wire  [15:0] dmouse0dat = {dmouse0dat_h, dmouse0dat_l};
+reg   [7:0]  dmouse1dat_l;  // docking mouse counters, X (bits 7:0)
+reg   [15:8] dmouse1dat_h;  // docking mouse counters, Y (bits 15:8)
+wire  [15:0] dmouse1dat = {dmouse1dat_h, dmouse1dat_l};
 wire         _mleft;        // left mouse button
 wire         _mthird;       // middle mouse button
 wire         _mright;       // right mouse buttons
@@ -248,29 +264,31 @@ always @ (posedge clk) begin
 end
 
 // Port 1
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to the split
+// registers dmouse0dat_l/_h and dmouse1dat_l/_h (see declaration above).
 always @ (posedge clk) begin
 	if (clk7_en) begin
 		if (test_load)
-			dmouse0dat[7:0] <= 8'h00;
+			dmouse0dat_l[7:0] <= 8'h00;
 		else if ((!_djoy1[0] && _sjoy1[0] && _sjoy1[2]) || (_djoy1[0] && !_sjoy1[0] && !_sjoy1[2]) || (!_djoy1[2] && _sjoy1[2] && !_sjoy1[0]) || (_djoy1[2] && !_sjoy1[2] && _sjoy1[0]))
-			dmouse0dat[7:0] <= dmouse0dat[7:0] + 1'd1;
+			dmouse0dat_l[7:0] <= dmouse0dat[7:0] + 1'd1;
 		else if ((!_djoy1[0] && _sjoy1[0] && !_sjoy1[2]) || (_djoy1[0] && !_sjoy1[0] && _sjoy1[2]) || (!_djoy1[2] && _sjoy1[2] && _sjoy1[0]) || (_djoy1[2] && !_sjoy1[2] && !_sjoy1[0]))
-			dmouse0dat[7:0] <= dmouse0dat[7:0] - 1'd1;
+			dmouse0dat_l[7:0] <= dmouse0dat[7:0] - 1'd1;
 		else
-			dmouse0dat[1:0] <= {!_djoy1[0], _djoy1[0] ^ _djoy1[2]};
+			dmouse0dat_l[1:0] <= {!_djoy1[0], _djoy1[0] ^ _djoy1[2]};
 	end
 end
 
 always @ (posedge clk) begin
 	if (clk7_en) begin
 		if (test_load)
-			dmouse0dat[15:8] <= 8'h00;
+			dmouse0dat_h[15:8] <= 8'h00;
 		else if ((!_djoy1[1] && _sjoy1[1] && _sjoy1[3]) || (_djoy1[1] && !_sjoy1[1] && !_sjoy1[3]) || (!_djoy1[3] && _sjoy1[3] && !_sjoy1[1]) || (_djoy1[3] && !_sjoy1[3] && _sjoy1[1]))
-			dmouse0dat[15:8] <= dmouse0dat[15:8] + 1'd1;
+			dmouse0dat_h[15:8] <= dmouse0dat[15:8] + 1'd1;
 		else if ((!_djoy1[1] && _sjoy1[1] && !_sjoy1[3]) || (_djoy1[1] && !_sjoy1[1] && _sjoy1[3]) || (!_djoy1[3] && _sjoy1[3] && _sjoy1[1]) || (_djoy1[3] && !_sjoy1[3] && !_sjoy1[1]))
-			dmouse0dat[15:8] <= dmouse0dat[15:8] - 1'd1;
+			dmouse0dat_h[15:8] <= dmouse0dat[15:8] - 1'd1;
 		else
-			dmouse0dat[9:8] <= {!_djoy1[1], _djoy1[1] ^ _djoy1[3]};
+			dmouse0dat_h[9:8] <= {!_djoy1[1], _djoy1[1] ^ _djoy1[3]};
 	end
 end
 
@@ -278,26 +296,26 @@ end
 always @ (posedge clk) begin
 	if (clk7_en) begin
 		if (test_load)
-			dmouse1dat[7:2] <= test_data[7:2];
+			dmouse1dat_l[7:2] <= test_data[7:2];
 		else if ((!_djoy2[0] && _sjoy2[0] && _sjoy2[2]) || (_djoy2[0] && !_sjoy2[0] && !_sjoy2[2]) || (!_djoy2[2] && _sjoy2[2] && !_sjoy2[0]) || (_djoy2[2] && !_sjoy2[2] && _sjoy2[0]))
-			dmouse1dat[7:0] <= dmouse1dat[7:0] + 1'd1;
+			dmouse1dat_l[7:0] <= dmouse1dat[7:0] + 1'd1;
 		else if ((!_djoy2[0] && _sjoy2[0] && !_sjoy2[2]) || (_djoy2[0] && !_sjoy2[0] && _sjoy2[2]) || (!_djoy2[2] && _sjoy2[2] && _sjoy2[0]) || (_djoy2[2] && !_sjoy2[2] && !_sjoy2[0]))
-			dmouse1dat[7:0] <= dmouse1dat[7:0] - 1'd1;
+			dmouse1dat_l[7:0] <= dmouse1dat[7:0] - 1'd1;
 		else
-			dmouse1dat[1:0] <= {!_djoy2[0], _djoy2[0] ^ _djoy2[2]};
+			dmouse1dat_l[1:0] <= {!_djoy2[0], _djoy2[0] ^ _djoy2[2]};
 	end
 end
 
 always @ (posedge clk) begin
 	if (clk7_en) begin
 		if (test_load)
-			dmouse1dat[15:10] <= test_data[15:10];
+			dmouse1dat_h[15:10] <= test_data[15:10];
 		else if ((!_djoy2[1] && _sjoy2[1] && _sjoy2[3]) || (_djoy2[1] && !_sjoy2[1] && !_sjoy2[3]) || (!_djoy2[3] && _sjoy2[3] && !_sjoy2[1]) || (_djoy2[3] && !_sjoy2[3] && _sjoy2[1]))
-			dmouse1dat[15:8] <= dmouse1dat[15:8] + 1'd1;
+			dmouse1dat_h[15:8] <= dmouse1dat[15:8] + 1'd1;
 		else if ((!_djoy2[1] && _sjoy2[1] && !_sjoy2[3]) || (_djoy2[1] && !_sjoy2[1] && _sjoy2[3]) || (!_djoy2[3] && _sjoy2[3] && _sjoy2[1]) || (_djoy2[3] && !_sjoy2[3] && !_sjoy2[1]))
-			dmouse1dat[15:8] <= dmouse1dat[15:8] - 1'd1;
+			dmouse1dat_h[15:8] <= dmouse1dat[15:8] - 1'd1;
 		else
-			dmouse1dat[9:8] <= {!_djoy2[1], _djoy2[1] ^ _djoy2[3]};
+			dmouse1dat_h[9:8] <= {!_djoy2[1], _djoy2[1] ^ _djoy2[3]};
 	end
 end
 
@@ -347,7 +365,9 @@ reg  [ 7:0] ycount;
 reg  [ 7:0] mouse0scr;
 
 // mouse counters
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires a named block
+// when local variables are declared inside an always block (Synth 8-2576).
+always @(posedge clk) begin : mouse_cnt_blk
 	reg old_level;
 	reg wheel;
 	
@@ -393,8 +413,17 @@ reg [5:0] t_ide_config = 0;
 reg [4:0] t_cpu_config = 0;
 reg [4:0] t_chipset_config = 0;
 
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: split registers for the
+// multi-driven memory_config output (see port comment above).
+reg [5:0] memory_config_50;   // bits 5:0, latched while reset is active
+reg       memory_config_6;    // bit 6 (HRTmon), follows t_memory_config freely
+reg       memory_config_7;    // bit 7, latched while reset is active
+assign memory_config = {memory_config_7, memory_config_6, memory_config_50};
+
 // configuration changes only while reset is active
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: named block (local variable
+// declarations, Synth 8-2576) and writes to the split memory_config registers.
+always @(posedge clk) begin : config_blk
 	reg [5:0] ide_cfg = 0;
 	reg [1:0] cpu_cfg = 0;
 
@@ -402,17 +431,17 @@ always @(posedge clk) begin
 		chipset_config <= t_chipset_config;
 		ide_cfg <= t_ide_config;
 		cpu_cfg <= t_cpu_config[1:0];
-		memory_config[5:0] <= t_memory_config[5:0];
-		memory_config[7] <= t_memory_config[7];
+		memory_config_50[5:0] <= t_memory_config[5:0];
+		memory_config_7 <= t_memory_config[7];
 	end
-	
+
 	ide_config <= ide_cfg;
 	cpu_config <= cpu_cfg;
 end
 
 always @(posedge clk) begin
 	cache_config[2:0] <= t_cpu_config[4:2];
-	memory_config[6] <= t_memory_config[6];
+	memory_config_6 <= t_memory_config[6];
 end
 
 reg [7:0] cmd;
@@ -428,7 +457,9 @@ wire video_cfg_sel    = (cmd[3:0] == 6); // DDHHLLSS || video config    | DD - d
 wire floppy_cfg_sel   = (cmd[3:0] == 7); // XXXXXFFS || floppy config   | FF - drive number, S - floppy speed
 wire harddisk_cfg_sel = (cmd[3:0] == 8); // XXXXXSMC || harddisk config | S - enable slave HDD, M - enable master HDD, C - enable HDD controler
 wire joystick_cfg_sel = (cmd[3:0] == 9); // XXXXSMMX || joystick config | S - swap joysticks, MM - dig/analog/cd32
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires a named block
+// when local variables are declared inside an always block (Synth 8-2576).
+always @(posedge clk) begin : host_cmd_blk
 	reg       has_cmd;
 	reg       mrx;
 	reg       btoggle;
@@ -487,7 +518,9 @@ always @(posedge clk) begin
 					end
 					else host_wdat[15:8] <= IO_DIN[7:0];
 				end
-			end;
+			// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: removed stray ';'
+			// after 'end' (null statement, not legal Verilog-2001).
+			end
 		end
 	end
 	else if(clk7_en) begin

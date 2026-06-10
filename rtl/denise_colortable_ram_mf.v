@@ -16,6 +16,38 @@
 //
 // 10.1 Build 197 01/19/2011 SP 1 SJ Web Edition
 // ************************************************************
+//
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026:
+// The Altera altsyncram megafunction is not available in Vivado/Xilinx.
+// The module body has been rewritten as behavioral Verilog that Vivado
+// infers as block RAM. Module name and port list are IDENTICAL to the
+// original, so the consumers (denise_colortable.v, denise_hamgenerator.v)
+// are unchanged. The original altsyncram instantiation is kept below,
+// commented out, for reference.
+//
+// Replicated altsyncram semantics (see commented defparams below):
+//   - simple dual port ("DUAL_PORT"), 256 words x 32 bit
+//   - single clock ("clock", address_reg_b = CLOCK0), common clock
+//     enable "enable" (clocken0) gating both the write port and the
+//     read-address/read-data capture (clock_enable_input_a/b = NORMAL)
+//   - write port: 4 byte enables, byte_size = 8; altsyncram lane
+//     convention: byteena_a[0] covers data[7:0], byteena_a[1] data[15:8],
+//     byteena_a[2] data[23:16], byteena_a[3] data[31:24]. The consumers
+//     rely on this: wr_bs = loct ? 4'b0011 : 4'b1111 must write only the
+//     low halfword (color_lo = rd_dat[15:0]) in "loct" mode.
+//   - READ LATENCY = 1 clock: read address is registered at the rising
+//     edge of "clock" (when enable = 1), output q is unregistered
+//     (outdata_reg_b = UNREGISTERED), i.e. q is stable between read
+//     edges and updates only as a consequence of an enabled clock edge.
+//     This is modeled here as a synchronous "read first" register
+//     (q_reg <= ram[rdaddress]) which has exactly the same timing.
+//   - read_during_write_mode_mixed_ports = OLD_DATA: when the read port
+//     reads the address that is being written in the same cycle, the OLD
+//     memory content is returned. The "read before write" coding style
+//     below reproduces this and makes Vivado choose READ_FIRST collision
+//     behavior for the inferred BRAM.
+//   - power_up_uninitialized = FALSE: memory powers up as all zeros
+//     (replicated with the "initial" block, honored by Vivado).
 
 
 //Copyright (C) 1991-2011 Altera Corporation
@@ -54,17 +86,66 @@ module denise_colortable_ram_mf (
 	input	[7:0]  wraddress;
 	input	  wren;
 	output	[31:0]  q;
-`ifndef ALTERA_RESERVED_QIS
-// synopsys translate_off
-`endif
-	tri1	[3:0]  byteena_a;
-	tri1	  clock;
-	tri1	  enable;
-	tri0	  wren;
-`ifndef ALTERA_RESERVED_QIS
-// synopsys translate_on
-`endif
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the Altera-specific
+// tri0/tri1 net declarations (simulation-only pull defaults for
+// unconnected ports) were removed; both consumers connect every port.
+//`ifndef ALTERA_RESERVED_QIS
+//// synopsys translate_off
+//`endif
+//	tri1	[3:0]  byteena_a;
+//	tri1	  clock;
+//	tri1	  enable;
+//	tri0	  wren;
+//`ifndef ALTERA_RESERVED_QIS
+//// synopsys translate_on
+//`endif
 
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: behavioral replacement
+// for the original altsyncram (kept commented out below). Vivado infers a
+// simple dual port block RAM with byte write enables from this pattern
+// (UG901 "byte-write enable, read-first" template). Read latency =
+// 1 enabled clock edge: the read happens at the rising edge of "clock"
+// (gated by "enable" = original clocken0), q is unregistered beyond that
+// (q_reg is the BRAM output latch, outdata_reg_b = UNREGISTERED). Reading
+// the address that is written in the same cycle returns OLD data
+// (READ_FIRST), matching read_during_write_mode_mixed_ports = "OLD_DATA".
+// Byte lane order follows the altsyncram convention:
+// byteena_a[0] = data[7:0] ... byteena_a[3] = data[31:24]; the consumers
+// (denise_colortable.v / denise_hamgenerator.v) rely on this for the
+// "loct" (12-bit low palette) write with wr_bs = 4'b0011.
+
+	reg [31:0] ram [0:255];
+	reg [31:0] q_reg;
+
+	// power_up_uninitialized = "FALSE" on Altera means: all zeros.
+	// Xilinx BRAM also powers up zeroed; the initial block makes this
+	// explicit (Vivado honors initial blocks for RAM initialization).
+	integer i;
+	initial begin
+		for (i = 0; i < 256; i = i + 1)
+			ram[i] = 32'd0;
+		q_reg = 32'd0;
+	end
+
+	always @(posedge clock) begin
+		if (enable) begin
+			// read first (samples pre-write content) -> OLD_DATA on
+			// read-during-write collisions, 1 cycle read latency
+			q_reg <= ram[rdaddress];
+			if (wren) begin
+				if (byteena_a[0]) ram[wraddress][ 7: 0] <= data[ 7: 0];
+				if (byteena_a[1]) ram[wraddress][15: 8] <= data[15: 8];
+				if (byteena_a[2]) ram[wraddress][23:16] <= data[23:16];
+				if (byteena_a[3]) ram[wraddress][31:24] <= data[31:24];
+			end
+		end
+	end
+
+	assign q = q_reg;
+
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: original Altera
+// altsyncram instantiation, kept for reference:
+/*
 	wire [31:0] sub_wire0;
 	wire [31:0] q = sub_wire0[31:0];
 
@@ -113,7 +194,7 @@ module denise_colortable_ram_mf (
 		altsyncram_component.width_a = 32,
 		altsyncram_component.width_b = 32,
 		altsyncram_component.width_byteena_a = 4;
-
+*/
 
 endmodule
 

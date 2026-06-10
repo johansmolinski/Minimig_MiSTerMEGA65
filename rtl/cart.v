@@ -141,7 +141,10 @@ end
 wire sel_custom_mirror = ~dbr && cpu_rd && (cpu_address_in[23:12]==12'b1010_1001_1111) && stealth; // $A9F000
 
 reg [15:0] custom_mirror_q;
-reg [15:0] custom_mirror[256];
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: unpacked array size "[256]"
+// is SystemVerilog syntax; changed to the equivalent Verilog-2001 range
+// "[0:255]" so this file compiles as plain Verilog in Vivado.
+reg [15:0] custom_mirror[0:255];
 always @ (posedge clk) begin
 	if (clk7_en) begin
 		custom_mirror[reg_address_in] <= reg_data_in;

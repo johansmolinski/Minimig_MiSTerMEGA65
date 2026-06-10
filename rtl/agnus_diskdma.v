@@ -15,8 +15,16 @@ module agnus_diskdma
 	input 	[8:1] reg_address_in,	//register address inputs
 	output 	[8:1] reg_address_out,	//register address outputs
 	input	[15:0] data_in,			//bus data in
-	output	reg [20:1] address_out	//chip address out current disk dma pointer
+	// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: address_out was an
+	// 'output reg' driven by two separate always blocks (bits [20:16] and
+	// [15:1]) - a multi-driven variable that Vivado rejects. Split into two
+	// internal registers recombined below; the port is now a plain output net.
+	output	[20:1] address_out	//chip address out current disk dma pointer
 );
+
+reg [20:16] address_out_hi;	// MiSTer2MEGA65 (AExp): split, see port comment
+reg [15:1]  address_out_lo;	// MiSTer2MEGA65 (AExp): split, see port comment
+assign address_out = {address_out_hi, address_out_lo};
 //register names and adresses
 parameter DSKPTH  = 9'h020;
 parameter DSKPTL  = 9'h022;
@@ -56,16 +64,18 @@ assign wr = ~dmas;
 assign address_outnew[20:1] = dma ? address_out[20:1]+1'b1 : {data_in[4:0],data_in[15:1]};
 
 //disk pointer control
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: writes go to the split
+// registers address_out_hi/address_out_lo (see port comment above).
 always @(posedge clk)
   if (clk7_en) begin
   	if (dma || (reg_address_in[8:1] == DSKPTH[8:1]))
-  		address_out[20:16] <= address_outnew[20:16];//high 5 bits
+  		address_out_hi[20:16] <= address_outnew[20:16];//high 5 bits
   end
 
 always @(posedge clk)
   if (clk7_en) begin
   	if (dma || (reg_address_in[8:1] == DSKPTL[8:1]))
-  		address_out[15:1] <= address_outnew[15:1];//low 15 bits
+  		address_out_lo[15:1] <= address_outnew[15:1];//low 15 bits
   end
 
 //--------------------------------------------------------------------------------------

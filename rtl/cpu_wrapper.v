@@ -23,6 +23,31 @@
 //                                                                          //
 //--------------------------------------------------------------------------//
 //--------------------------------------------------------------------------//
+//                                                                          //
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026:                         //
+// Reduced to the 68000 (fx68k) path running entirely on the single        //
+// 28.375 MHz core clock:                                                  //
+//  * TG68KdotC_Kernel (68020, VHDL) is no longer instantiated; its output //
+//    wires are tied to safe constants so the cpucfg muxes still           //
+//    elaborate. cpucfg MUST be driven with 2'b00 by the parent.           //
+//  * The SDRAM/DDR3 cpu port (sdram_ctrl/ddram_ctrl + cpu cache in        //
+//    MiSTer's Minimig.sv) is not ported - all Amiga memory is BRAM        //
+//    behind minimig.v's chip bus. ramsel is tied to 0, so EVERY CPU       //
+//    cycle (incl. stray accesses to $DD4000-$DD5FFF, sel_dd) goes to the  //
+//    chip bus where minimig_m68k_bridge.v always generates _dtack. This   //
+//    is also the defensive always-ack: in the original code a sel_dd      //
+//    access would wait forever on ramready and hang the CPU.              //
+//  * Toccata autoconfig is disabled (sound card logic not ported).        //
+//  * Zorro II/III fastram autoconfig logic is kept but self-disables      //
+//    with fastramcfg = 3'b000 (the only supported configuration).         //
+//  * The port list is unchanged for compile compatibility with the way    //
+//    MiSTer's Minimig.sv instantiates this module. Unused inputs must be  //
+//    tied off by the parent, unused outputs left open.                    //
+//  * Original code is kept as comments; all changes carry a               //
+//    "MiSTer2MEGA65" provenance comment.                                  //
+//                                                                          //
+//--------------------------------------------------------------------------//
+//--------------------------------------------------------------------------//
 
 module cpu_wrapper
 (
@@ -74,8 +99,18 @@ module cpu_wrapper
 	output reg [31:0] nmi_addr
 );
 
-assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_dd | sel_rtg);
-assign ramshared    = sel_dd;
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the SDRAM/DDR3 cpu port is
+// not ported (no sdram_ctrl/ddram_ctrl; all memory is BRAM on the chip bus).
+// ramsel is tied to 0 so all CPU cycles - including the otherwise never-acked
+// $DD4000-$DD5FFF (sel_dd) range - are routed to the chip bus, where
+// minimig_m68k_bridge.v always generates _dtack (defensive against bus hangs).
+// With 68000 (cpucfg=00) + fastramcfg=000 the original expression could only
+// ever assert via sel_dd anyway (sel_chipram/sel_kickram need turbo=cpucfg[1],
+// sel_zram needs autoconfig'd fastram, sel_rtg needs a 32-bit address).
+//assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_dd | sel_rtg);
+//assign ramshared    = sel_dd;
+assign ramsel       = 1'b0;
+assign ramshared    = 1'b0;
 
 // NMI
 always @(posedge clk) nmi_addr <= vbr + 32'h7c;
@@ -98,9 +133,14 @@ wire sel_nmi_vector = (cpu_addr[31:2] == nmi_addr[31:2]) && (cpustate == 2);
 
 wire [15:0] ramdat;
 
-assign ramlds = sel_rtg ? uds_in : lds_in;
-assign ramuds = sel_rtg ? lds_in : uds_in;
-assign ramdin = sel_rtg ? {cpu_dout[7:0],cpu_dout[15:8]} : cpu_dout;
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: SDRAM cpu-port outputs tied
+// inactive (ports kept only for compile compatibility - leave open in parent).
+//assign ramlds = sel_rtg ? uds_in : lds_in;
+//assign ramuds = sel_rtg ? lds_in : uds_in;
+//assign ramdin = sel_rtg ? {cpu_dout[7:0],cpu_dout[15:8]} : cpu_dout;
+assign ramlds = 1'b0;
+assign ramuds = 1'b0;
+assign ramdin = 16'h0000;
 assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 
 //       Main  DDx  RTG  8M  128M  256M
@@ -114,15 +154,18 @@ assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 
 // This is the mapping to the sram
 // map 00-1f to 00-1f (chipram), a0-ff to 20-7f. All non-fastram goes into the first
-// 8M block(SDRAM). This map should be the same as in minimig_sram_bridge.v 
+// 8M block(SDRAM). This map should be the same as in minimig_sram_bridge.v
 // All Zorro RAM goes to DDR3
-assign ramaddr[28]    = sel_zram & ~sel_z3ram0;
-assign ramaddr[27]    = sel_zram & (~sel_z3ram1 | cpu_addr[27]);
-assign ramaddr[26:23] = (sel_z3ram0 | sel_z3ram1) ? cpu_addr[26:23]: (sel_rtg ? 4'b1110 : {4{sel_dd}});
-assign ramaddr[22:19] = {4{sel_dd}} | cpu_addr[22:19];
-assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
-assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
-assign ramaddr[15:1]  = cpu_addr[15:1];
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: SDRAM cpu-port address
+// mapping tied to 0 - the SDRAM/DDR3 cpu port is not ported (see ramsel).
+//assign ramaddr[28]    = sel_zram & ~sel_z3ram0;
+//assign ramaddr[27]    = sel_zram & (~sel_z3ram1 | cpu_addr[27]);
+//assign ramaddr[26:23] = (sel_z3ram0 | sel_z3ram1) ? cpu_addr[26:23]: (sel_rtg ? 4'b1110 : {4{sel_dd}});
+//assign ramaddr[22:19] = {4{sel_dd}} | cpu_addr[22:19];
+//assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
+//assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
+//assign ramaddr[15:1]  = cpu_addr[15:1];
+assign ramaddr[28:1]  = 28'd0;
 
 assign fastchip_lds = lds_in;
 assign fastchip_uds = uds_in;
@@ -180,48 +223,56 @@ always @* begin
 	end
 end
 
-wire [15:0] cpu_dout_p;
-wire [31:0] cpu_addr_p;
-wire  [1:0] cpustate_p;
-wire  [3:0] cacr_p;
-wire [31:0] vbr_p;
-wire        wr_p;
-wire        uds_p;
-wire        lds_p;
-wire        reset_out_p;
-wire        longword;
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the TG68KdotC_Kernel
+// (68020 soft CPU, VHDL) is not ported - this core is 68000 (fx68k) only and
+// cpucfg is always 2'b00. The instance is removed (it was instantiated
+// unconditionally and would synthesize ~10k LUTs of dead logic and pull in
+// the tg68k VHDL sources). Its former output wires are tied to safe inactive
+// constants so the cpucfg muxes above still elaborate unchanged:
+//   cpustate_p = 2'b01 ("no memaccess") so cpu_req would stay low,
+//   nwr/nuds/nlds = 1 (active low, deasserted), nresetout = 1 (not in reset).
+wire [15:0] cpu_dout_p  = 16'h0000;
+wire [31:0] cpu_addr_p  = 32'h00000000;
+wire  [1:0] cpustate_p  = 2'b01;
+wire  [3:0] cacr_p      = 4'b0000;
+wire [31:0] vbr_p       = 32'h00000000;
+wire        wr_p        = 1'b1;
+wire        uds_p       = 1'b1;
+wire        lds_p       = 1'b1;
+wire        reset_out_p = 1'b1;
+wire        longword    = 1'b0;
 
-TG68KdotC_Kernel
-#(
-	.sr_read(2),        // 0=>user,   1=>privileged,    2=>switchable with CPU(0)
-	.vbr_stackframe(2), // 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
-	.extaddr_mode(2),   // 0=>no,     1=>yes,           2=>switchable with CPU(1)
-	.mul_mode(2),       // 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no MUL,
-	.div_mode(2),       // 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no DIV,
-	.bitfield(2)        // 0=>no,     1=>yes,           2=>switchable with CPU(1)
-)
-cpu_inst_p
-(
-  .clk(clk),
-  .nreset(reset),
-  .clkena_in(~cpu_req | chipready | ramready | fastchip_ready),
-  .data_in(cpu_din),
-  .ipl(cpu_ipl),
-  .ipl_autovector(1),
-  .regin_out(),
-  .addr_out(cpu_addr_p),
-  .data_write(cpu_dout_p),
-  .nwr(wr_p),
-  .nuds(uds_p),
-  .nlds(lds_p),
-  .nresetout(reset_out_p),
-  .longword(longword),
-  
-  .cpu(cpucfg),
-  .busstate(cpustate_p),		// 0: fetch code, 1: no memaccess, 2: read data, 3: write data
-  .cacr_out(cacr_p),
-  .vbr_out(vbr_p)
-);
+//TG68KdotC_Kernel
+//#(
+//	.sr_read(2),        // 0=>user,   1=>privileged,    2=>switchable with CPU(0)
+//	.vbr_stackframe(2), // 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
+//	.extaddr_mode(2),   // 0=>no,     1=>yes,           2=>switchable with CPU(1)
+//	.mul_mode(2),       // 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no MUL,
+//	.div_mode(2),       // 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no DIV,
+//	.bitfield(2)        // 0=>no,     1=>yes,           2=>switchable with CPU(1)
+//)
+//cpu_inst_p
+//(
+//  .clk(clk),
+//  .nreset(reset),
+//  .clkena_in(~cpu_req | chipready | ramready | fastchip_ready),
+//  .data_in(cpu_din),
+//  .ipl(cpu_ipl),
+//  .ipl_autovector(1),
+//  .regin_out(),
+//  .addr_out(cpu_addr_p),
+//  .data_write(cpu_dout_p),
+//  .nwr(wr_p),
+//  .nuds(uds_p),
+//  .nlds(lds_p),
+//  .nresetout(reset_out_p),
+//  .longword(longword),
+//
+//  .cpu(cpucfg),
+//  .busstate(cpustate_p),		// 0: fetch code, 1: no memaccess, 2: read data, 3: write data
+//  .cacr_out(cacr_p),
+//  .vbr_out(vbr_p)
+//);
 
 wire [15:0] cpu_dout_o;
 wire [23:1] cpu_addr_o;
@@ -247,7 +298,11 @@ fx68k cpu_inst_o
 	.ASn(as_o),
 	.LDSn(lds_o),
 	.UDSn(uds_o),
-	.DTACKn(ramsel ? ~ramready : chip_dtack),
+	// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: ramsel is tied to 0
+	// (no SDRAM cpu port), so DTACKn always comes from the chip bus, which
+	// minimig_m68k_bridge.v acknowledges for every address - no bus hangs.
+	//.DTACKn(ramsel ? ~ramready : chip_dtack),
+	.DTACKn(chip_dtack),
 
 	.FC0(fc_o[0]),
 	.FC1(fc_o[1]),
@@ -270,6 +325,9 @@ wire cpu_req = (cpustate != 1);
 wire cchip = turbochip_d & (!cpustate | dcache_d);
 wire ckick = turbokick_d & (!cpustate | dcache_d);
 
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: turbo chipram/kickstart
+// selects kept unchanged - they self-disable with cpucfg[1]=0 (68000), so
+// cchip/ckick and thus sel_chipram/sel_kickram are constant 0 in this port.
 reg turbochip_d;
 reg turbokick_d;
 reg dcache_d;
@@ -303,7 +361,15 @@ reg        chipready;
 reg [15:0] chipdout_i;
 reg  [2:0] ipl_i;
 reg        c_as,c_rw,c_uds,c_lds;
-always @(negedge clk, negedge reset) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: chip-bus FSM kept per
+// porting plan. NOTE: its outputs (c_as/c_rw/c_uds/c_lds, chipready,
+// chipdout_i, ipl_i) are only consumed by the cpucfg!=0 (TG68K) branch of
+// the mux above; the fx68k path drives the chip bus directly. With cpucfg
+// tied to 2'b00 in the parent, Vivado constant-propagates this FSM away.
+// This is the only negedge-clk logic in the core (constrain accordingly).
+// Vivado fix (see .research/c64_mister-diff.md B1): local reg declarations
+// require a NAMED block in plain Verilog mode.
+always @(negedge clk, negedge reset) begin : chipbus_fsm
 	reg [1:0] stage;
 	reg waitm;
 	reg ready;
@@ -419,13 +485,23 @@ reg [4:0] z3ram_base0;
 reg [3:0] z3ram_base1;
 reg       z3ram_ena0;
 reg       z3ram_ena1;
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026:
+//  * Named block (Vivado B1 fix: local reg declaration in unnamed block).
+//  * ac_toccata reset to 0: the Toccata sound card (fpga-toccata) is not
+//    ported, so we must not advertise a phantom Zorro-II board to the
+//    Kickstart expansion library.
+//  * With fastramcfg tied to 3'b000 by the parent, ac_memcard resets to 0 -
+//    the whole Zorro autoconfig block is then constant and synthesizes away,
+//    which is why it is kept in source (cheap and self-disabling).
+always @(posedge clk) begin : autoconfig_blk
 	reg old_uds;
 	old_uds <= chip_uds;
 
 	if (~reset | ~reset_out) begin
 		ac_memcard  <= cpucfg[1] ? fastramcfg : fastramcfg[2] ? 3'd3 : {1'b0, fastramcfg[1:0]};
-		ac_toccata  <= 1;
+		//ac_toccata  <= 1; // MiSTer2MEGA65 (AExp): Toccata not ported, see above
+		ac_toccata  <= 0;
+		toccata_base <= 8'h00; // MiSTer2MEGA65 (AExp): give the (now never written) reg a defined value
 		z2ram_ena   <= 0;
 		z3ram_ena0  <= 0;
 		z3ram_ena1  <= 0;
@@ -462,6 +538,10 @@ always @(posedge clk) begin
 	end
 end
 
-assign toccata_ena = ~ac_toccata;
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Toccata is not ported.
+// With ac_toccata now reset to 0 the original expression would wrongly
+// report the card as enabled, so the output is tied to 0 instead.
+//assign toccata_ena = ~ac_toccata;
+assign toccata_ena = 1'b0;
 
 endmodule

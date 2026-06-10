@@ -205,7 +205,9 @@ reg    freeze_reg=0;       // Action Replay freeze signal
 assign freeze = freeze_reg;
 
 // Generate single-cycle keyboard strobe on data change
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires a named block
+// when local variables are declared inside an always block (Synth 8-2576).
+always @(posedge clk) begin : keystrobe_blk
 	reg kms_levelD;
 	if (clk7n_en) begin
 		kms_levelD <= kms_level;

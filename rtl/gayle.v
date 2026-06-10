@@ -98,7 +98,9 @@ end
 
 // gayle id register: reads 1->1->0->1 on MSB
 reg [1:0] gayleid_cnt;	// sequence counter
-always @(posedge clk) begin
+// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: Vivado requires a named block
+// when local variables are declared inside an always block (Synth 8-2576).
+always @(posedge clk) begin : gayleid_blk
 	reg old_rd;
 	old_rd <= rd & sel_gayleid;
 
