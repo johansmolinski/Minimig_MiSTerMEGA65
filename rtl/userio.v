@@ -423,10 +423,12 @@ assign memory_config = {memory_config_7, memory_config_6, memory_config_50};
 // configuration changes only while reset is active
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: named block (local variable
 // declarations, Synth 8-2576) and writes to the split memory_config registers.
-always @(posedge clk) begin : config_blk
-	reg [5:0] ide_cfg = 0;
-	reg [1:0] cpu_cfg = 0;
+// ide_cfg/cpu_cfg moved to module scope: declaration initializers on
+// block-local variables are not legal Verilog-2001/2005 (module scope only).
+reg [5:0] ide_cfg = 0;
+reg [1:0] cpu_cfg = 0;
 
+always @(posedge clk) begin : config_blk
 	if (reset) begin
 		chipset_config <= t_chipset_config;
 		ide_cfg <= t_ide_config;

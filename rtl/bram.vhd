@@ -42,43 +42,11 @@
 
 
 --------------------------------------------------------------
--- Single port Block RAM
+-- MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: design units
+-- reordered so that referenced entities precede their users
+-- (spram_sz before spram, dpram_dif before dpram): Vivado analyzes
+-- units within one file top to bottom.
 --------------------------------------------------------------
-
-LIBRARY ieee;
-USE ieee.std_logic_1164.all;
-
--- MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: altera_mf removed
---LIBRARY altera_mf;
---USE altera_mf.altera_mf_components.all;
-
-ENTITY spram IS
-	generic (
-		addr_width    : integer := 8;
-		data_width    : integer := 8;
-		mem_init_file : string := " ";
-		mem_name      : string := "MEM" -- for InSystem Memory content editor.
-	);
-	PORT
-	(
-		clock   : in  STD_LOGIC;
-		address : in  STD_LOGIC_VECTOR (addr_width-1 DOWNTO 0);
-		data    : in  STD_LOGIC_VECTOR (data_width-1 DOWNTO 0) := (others => '0');
-		enable  : in  STD_LOGIC := '1';
-		wren    : in  STD_LOGIC := '0';
-		q       : out STD_LOGIC_VECTOR (data_width-1 DOWNTO 0);
-		cs      : in  std_logic := '1'
-	);
-END spram;
-
-
-ARCHITECTURE SYN OF spram IS
-BEGIN
-	spram_sz : work.spram_sz
-	generic map(addr_width, data_width, 2**addr_width, mem_init_file, mem_name)
-	port map(clock,address,data,enable,wren,q,cs);
-END SYN;
-
 
 --------------------------------------------------------------
 -- Single port Block RAM with specific size
@@ -122,7 +90,7 @@ ENTITY spram_sz IS
 END ENTITY;
 
 ARCHITECTURE SYN OF spram_sz IS
-	type ram_t is array (0 to numwords-1) of std_logic_vector(data_width-1 downto 0);
+	type ram_t is array (natural range 0 to numwords-1) of std_logic_vector(data_width-1 downto 0);
 	signal ram : ram_t := (others => (others => '0'));   -- power-up: all zeros
 	signal q0  : std_logic_vector((data_width - 1) downto 0) := (others => '0');
 BEGIN
@@ -181,8 +149,9 @@ BEGIN
 END SYN;
 
 --------------------------------------------------------------
--- Dual port Block RAM same parameters on both ports
+-- Single port Block RAM
 --------------------------------------------------------------
+
 LIBRARY ieee;
 USE ieee.std_logic_1164.all;
 
@@ -190,38 +159,35 @@ USE ieee.std_logic_1164.all;
 --LIBRARY altera_mf;
 --USE altera_mf.altera_mf_components.all;
 
-entity dpram is
+ENTITY spram IS
 	generic (
 		addr_width    : integer := 8;
 		data_width    : integer := 8;
-		mem_init_file : string := " "
+		mem_init_file : string := " ";
+		mem_name      : string := "MEM" -- for InSystem Memory content editor.
 	);
 	PORT
 	(
-		clock			: in  STD_LOGIC;
-
-		address_a	: in  STD_LOGIC_VECTOR (addr_width-1 DOWNTO 0);
-		data_a		: in  STD_LOGIC_VECTOR (data_width-1 DOWNTO 0) := (others => '0');
-		enable_a		: in  STD_LOGIC := '1';
-		wren_a		: in  STD_LOGIC := '0';
-		q_a			: out STD_LOGIC_VECTOR (data_width-1 DOWNTO 0);
-		cs_a        : in  std_logic := '1';
-
-		address_b	: in  STD_LOGIC_VECTOR (addr_width-1 DOWNTO 0) := (others => '0');
-		data_b		: in  STD_LOGIC_VECTOR (data_width-1 DOWNTO 0) := (others => '0');
-		enable_b		: in  STD_LOGIC := '1';
-		wren_b		: in  STD_LOGIC := '0';
-		q_b			: out STD_LOGIC_VECTOR (data_width-1 DOWNTO 0);
-		cs_b        : in  std_logic := '1'
+		clock   : in  STD_LOGIC;
+		address : in  STD_LOGIC_VECTOR (addr_width-1 DOWNTO 0);
+		data    : in  STD_LOGIC_VECTOR (data_width-1 DOWNTO 0) := (others => '0');
+		enable  : in  STD_LOGIC := '1';
+		wren    : in  STD_LOGIC := '0';
+		q       : out STD_LOGIC_VECTOR (data_width-1 DOWNTO 0);
+		cs      : in  std_logic := '1'
 	);
-end entity;
+END spram;
 
 
-ARCHITECTURE SYN OF dpram IS
+ARCHITECTURE SYN OF spram IS
 BEGIN
-	ram : work.dpram_dif generic map(addr_width,data_width,addr_width,data_width,mem_init_file)
-	port map(clock,address_a,data_a,enable_a,wren_a,q_a,cs_a,address_b,data_b,enable_b,wren_b,q_b,cs_b);
+	-- MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: 'entity' keyword added
+	-- (bare 'work.spram_sz' is LRM-illegal; only Quartus tolerated it)
+	spram_sz : entity work.spram_sz
+	generic map(addr_width, data_width, 2**addr_width, mem_init_file, mem_name)
+	port map(clock,address,data,enable,wren,q,cs);
 END SYN;
+
 
 --------------------------------------------------------------
 -- Dual port Block RAM different parameters on ports
@@ -279,7 +245,7 @@ end entity;
 
 ARCHITECTURE SYN OF dpram_dif IS
 
-	type ram_t is array (0 to 2**addr_width_a - 1) of std_logic_vector(data_width_a - 1 downto 0);
+	type ram_t is array (natural range 0 to 2**addr_width_a - 1) of std_logic_vector(data_width_a - 1 downto 0);
 	shared variable ram : ram_t := (others => (others => '0'));   -- power-up: all zeros
 
 	signal q0 : std_logic_vector((data_width_a - 1) downto 0) := (others => '0');
@@ -376,6 +342,51 @@ END SYN;
 
 
 --------------------------------------------------------------
+-- Dual port Block RAM same parameters on both ports
+--------------------------------------------------------------
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+
+-- MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: altera_mf removed
+--LIBRARY altera_mf;
+--USE altera_mf.altera_mf_components.all;
+
+entity dpram is
+	generic (
+		addr_width    : integer := 8;
+		data_width    : integer := 8;
+		mem_init_file : string := " "
+	);
+	PORT
+	(
+		clock			: in  STD_LOGIC;
+
+		address_a	: in  STD_LOGIC_VECTOR (addr_width-1 DOWNTO 0);
+		data_a		: in  STD_LOGIC_VECTOR (data_width-1 DOWNTO 0) := (others => '0');
+		enable_a		: in  STD_LOGIC := '1';
+		wren_a		: in  STD_LOGIC := '0';
+		q_a			: out STD_LOGIC_VECTOR (data_width-1 DOWNTO 0);
+		cs_a        : in  std_logic := '1';
+
+		address_b	: in  STD_LOGIC_VECTOR (addr_width-1 DOWNTO 0) := (others => '0');
+		data_b		: in  STD_LOGIC_VECTOR (data_width-1 DOWNTO 0) := (others => '0');
+		enable_b		: in  STD_LOGIC := '1';
+		wren_b		: in  STD_LOGIC := '0';
+		q_b			: out STD_LOGIC_VECTOR (data_width-1 DOWNTO 0);
+		cs_b        : in  std_logic := '1'
+	);
+end entity;
+
+
+ARCHITECTURE SYN OF dpram IS
+BEGIN
+	-- MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: 'entity' keyword added
+	-- (bare 'work.dpram_dif' is LRM-illegal; only Quartus tolerated it)
+	ram : entity work.dpram_dif generic map(addr_width,data_width,addr_width,data_width,mem_init_file)
+	port map(clock,address_a,data_a,enable_a,wren_a,q_a,cs_a,address_b,data_b,enable_b,wren_b,q_b,cs_b);
+END SYN;
+
+--------------------------------------------------------------
 -- Dual port Block RAM different parameters and clocks on ports
 --
 -- MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: rewritten as inferred
@@ -425,7 +436,7 @@ end entity;
 
 ARCHITECTURE SYN OF dpram_difclk IS
 
-	type ram_t is array (0 to 2**addr_width_a - 1) of std_logic_vector(data_width_a - 1 downto 0);
+	type ram_t is array (natural range 0 to 2**addr_width_a - 1) of std_logic_vector(data_width_a - 1 downto 0);
 	shared variable ram : ram_t := (others => (others => '0'));   -- power-up: all zeros
 
 	signal q0 : std_logic_vector((data_width_a - 1) downto 0) := (others => '0');
