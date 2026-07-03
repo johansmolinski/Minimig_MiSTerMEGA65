@@ -248,11 +248,29 @@ wire [15:0] joy1 = joy_ana_en ? {{12{1'b1}}, _joy1[6], 1'b1, _joy1[4], _joy1[5]}
 wire [15:0] joy2 = joy_ana_en ? {{12{1'b1}}, _joy2[6], 1'b1, _joy2[4], _joy2[5]} : _joy2;
 
 // input synchronization of external signals
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: gated with clk7_en. The dmouse
+// quadrature counters below sample _sjoy/_djoy only at clk7_en, but this block
+// shifted them at the full clk (28 MHz): a transition of a real Amiga mouse on
+// the joystick pins was visible in the _sjoy!=_djoy comparison for a single clk
+// cycle, so 3 of 4 transitions were never counted (the else-branch phase resync
+// then turned missed 4-count boundary crossings into -3 jumps: quarter-speed,
+// jittery pointer). Gating restores the original Minimig timing (7.09 MHz clk),
+// where every transition stays visible for a full clk7 period. Harmless for
+// MiSTer, which feeds these inputs from HPS-latched gamepads only.
+// Original code:
+//always @ (posedge clk) begin
+//	_sjoy1 <= joy_swap ? joy1 : joy2;
+//	_djoy1 <= _sjoy1;
+//	_sjoy2 <= joy_swap ? joy2 : joy1;
+//	_djoy2 <= _sjoy2;
+//end
 always @ (posedge clk) begin
-	_sjoy1 <= joy_swap ? joy1 : joy2;
-	_djoy1 <= _sjoy1;
-	_sjoy2 <= joy_swap ? joy2 : joy1;
-	_djoy2 <= _sjoy2;
+	if (clk7_en) begin
+		_sjoy1 <= joy_swap ? joy1 : joy2;
+		_djoy1 <= _sjoy1;
+		_sjoy2 <= joy_swap ? joy2 : joy1;
+		_djoy2 <= _sjoy2;
+	end
 end
 
 // port 1 automatic mouse/joystick switch
