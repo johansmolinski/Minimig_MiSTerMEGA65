@@ -8,11 +8,10 @@
 // CORE/vhdl/main.vhd cannot instantiate minimig directly. This wrapper
 // 1. renames all underscore-prefixed ports to the M2M convention
 //    (active-low signals get a _n suffix instead of the _ prefix),
-// 2. ties off every subsystem that the Amiga 500 milestone-1 configuration
-//    never uses (Toccata, IDE/Gayle externals, RS232 modem lines, RTC,
-//    joystick ports 3/4, analog joysticks, AGA chip48 bus, IO_FPGA floppy
-//    channel), so that CORE/vhdl/main.vhd stays free of clutter and the
-//    unused logic constant-folds in synthesis.
+// 2. ties off every subsystem that the Amiga 500 configuration never uses
+//    (Toccata, IDE/Gayle externals, RS232 modem lines, RTC, joystick ports
+//    3/4, analog joysticks, AGA chip48 bus), so that CORE/vhdl/main.vhd
+//    stays free of clutter and the unused logic constant-folds in synthesis.
 //
 // The wrapper adds NO logic - it is pure renaming and constant tie-offs.
 // See .research/PORTING-PLAN.md and the port table in
@@ -71,11 +70,15 @@ module minimig_m65
 	output        fdd_led,
 	output        hdd_led,
 
-	// host controller interface (config FSM in CORE/vhdl/amiga_config.vhd)
+	// host controller interface, shared IO_STROBE/IO_DIN bus with two frame
+	// enables: io_uio selects userio.v (config FSM amiga_config.vhd), io_fpga
+	// selects paula_floppy.v (ADF track engine adf_track_engine.vhd)
 	input         io_uio,         // command channel frame (userio.v IO_ENA)
+	input         io_fpga,        // floppy channel frame (paula_floppy.v IO_ENA)
 	input         io_strobe,      // word strobe, 1 clk wide
 	output        io_wait,
 	input  [15:0] io_din,
+	output [15:0] io_dout,        // response data (paula_floppy only; userio has none)
 
 	// video (28.375 MHz domain)
 	output        hsync_n,        // active low
@@ -163,12 +166,16 @@ minimig minimig_inst
 	.rtc           (65'b0        ), // no RTC in milestone 1
 
 	//host controller interface
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: IO_FPGA was tied 1'b0
+	// and IO_DOUT left open in milestone 1 (no floppy). Both are now real
+	// ports for the ADF floppy milestone (track engine on the paula_floppy
+	// host channel).
 	.IO_UIO        (io_uio       ),
-	.IO_FPGA       (1'b0         ), // paula_floppy host channel: no floppy in milestone 1
+	.IO_FPGA       (io_fpga      ),
 	.IO_STROBE     (io_strobe    ),
 	.IO_WAIT       (io_wait      ),
 	.IO_DIN        (io_din       ),
-	.IO_DOUT       (             ), // only floppy/userio status reads; unused
+	.IO_DOUT       (io_dout      ),
 
 	//video
 	._hsync        (hsync_n      ),
