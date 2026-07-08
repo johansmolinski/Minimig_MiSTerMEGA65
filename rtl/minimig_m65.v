@@ -70,6 +70,11 @@ module minimig_m65
 	output        fdd_led,
 	output        hdd_led,
 
+	// MEGA65 battery-backed RTC (issue #13): MiSTer-format 65-bit conduit,
+	// [63:0] = MSM6242B BCD nibbles, [64] = "new value" toggle. Driven by the
+	// M2M framework from the board RTC; decoded by minimig.v at $DC0000.
+	input  [64:0] rtc,
+
 	// host controller interface, shared IO_STROBE/IO_DIN bus with two frame
 	// enables: io_uio selects userio.v (config FSM amiga_config.vhd), io_fpga
 	// selects paula_floppy.v (ADF track engine adf_track_engine.vhd)
@@ -163,7 +168,9 @@ minimig minimig_inst
 	.pwr_led       (pwr_led      ),
 	.fdd_led       (fdd_led      ),
 	.hdd_led       (hdd_led      ),
-	.rtc           (65'b0        ), // no RTC in milestone 1
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: MEGA65 battery RTC wired
+	// through to Minimig's MSM6242B clock at $DC0000 (issue #13).
+	.rtc           (rtc          ),
 
 	//host controller interface
 	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: IO_FPGA was tied 1'b0
