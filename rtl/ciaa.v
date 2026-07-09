@@ -125,6 +125,11 @@ module ciaa
 	input        kms_level,     // Keyboard/mouse serial data level
 	input  [1:0] kbd_mouse_type, // 2 = keyboard data
 	input  [7:0] kbd_mouse_data, // Keyboard scan code
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: keyboard flow control.
+	// kbd_ack is HIGH while the CPU is reading the keyboard SDR ($BFEC01) - the "code
+	// consumed" event that keyboard.vhd waits for before sending the next code (the real
+	// keyboard-to-CIA handshake, preventing single-byte-SDR overrun on raw CIA readers).
+	output       kbd_ack,       // CPU reads keyboard SDR (level, held across the read)
 	output       freeze,        // Action Replay freeze button
 	input        hrtmon_en      // HRTMon debugger enable
 );
@@ -238,6 +243,19 @@ end
 
 // SDR read
 assign sdr_out = (!wr && sdr) ? sdr_latch[7:0] : 8'h00;
+
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: keyboard flow control.
+// Expose "keyboard code consumed" so keyboard.vhd can wait for the Amiga to take a code
+// before sending the next (the real-keyboard handshake that prevents single-byte-SDR
+// overrun on raw CIA readers). (!wr && sdr) == aen & rd & rs==C == a CPU read of the
+// keyboard SDR $BFEC01. Registered on clk7_en, so it is a LEVEL held for the whole
+// multi-cycle (E-clock-synced VPA) read: keyboard.vhd MUST rising-edge-detect it (one
+// edge = one read = one code consumed); free-latching a held level would let the tail of
+// one read falsely acknowledge the next code.
+reg kbd_ack_r;
+always @(posedge clk)
+  if (clk7_en) kbd_ack_r <= (!wr && sdr);
+assign kbd_ack = kbd_ack_r;
 
 // Serial port transmission control (output mode)
 // Used for keyboard handshake and other serial communication

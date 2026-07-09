@@ -205,6 +205,9 @@ module minimig
 	input 	     kms_level,
 	input   [1:0] kbd_mouse_type,
 	input   [7:0] kbd_mouse_data,
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: keyboard flow control -
+	// CIA-A "keyboard SDR read" back-channel for keyboard.vhd (see ciaa.v / CIAA1).
+	output 	     kbd_ack,     // HIGH while the CPU reads the keyboard SDR
 	output 	     pwr_led,     // power led
 	output 	     fdd_led,     // disk activity LED, active when DMA is on
 	output 	     hdd_led,
@@ -623,7 +626,8 @@ ciaa CIAA1
 	.portb_in({_joy4[0],_joy4[1],_joy4[2],_joy4[3],_joy3[0],_joy3[1],_joy3[2],_joy3[3]}),
 	.kbd_mouse_type(kbd_mouse_type),
 	.kms_level(kms_level),
-	.kbd_mouse_data(kbd_mouse_data), 
+	.kbd_mouse_data(kbd_mouse_data),
+	.kbd_ack(kbd_ack),
 	.freeze(freeze),
 	.hrtmon_en (memory_config[6])
 );

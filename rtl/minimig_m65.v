@@ -64,6 +64,9 @@ module minimig_m65
 	input         kms_level,      // keyboard/mouse event toggle strobe
 	input   [1:0] kbd_mouse_type, // 2 = raw Amiga keyboard scancode
 	input   [7:0] kbd_mouse_data, // scancode (bit 7 = release)
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: keyboard flow control -
+	// pass CIA-A's "keyboard SDR read" back-channel through to keyboard.vhd (see ciaa.v).
+	output        kbd_ack,        // HIGH while the CPU reads the keyboard SDR
 
 	// LEDs
 	output        pwr_led,
@@ -165,6 +168,7 @@ minimig minimig_inst
 	.kms_level     (kms_level    ),
 	.kbd_mouse_type(kbd_mouse_type),
 	.kbd_mouse_data(kbd_mouse_data),
+	.kbd_ack       (kbd_ack      ),
 	.pwr_led       (pwr_led      ),
 	.fdd_led       (fdd_led      ),
 	.hdd_led       (hdd_led      ),
