@@ -108,6 +108,17 @@ module paula
 	output [8:0] rdata_okk, 	//right DAC data (PWM volume)
 	// system configuration
 	input	  [1:0] floppy_drives,	//number of extra floppy drives
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
+	// pass-through to paula_floppy (see the port comments there)
+	input   [3:0] phys_mask,
+	input         phys_change_n,
+	input         phys_wprot_n,
+	input         phys_track0_n,
+	input         phys_ready_n,
+	input         phys_index,
+	output  [3:0] motor_on_o,
+	output [15:0] fdd_dsig,
+	output  [7:0] fdd_datt,
 	// fifo / track display
 	output  [7:0] trackdisp,
 	output [13:0] secdisp,
@@ -269,6 +280,17 @@ paula_floppy pf1
 	.IO_DOUT(IO_DOUT),
 	.fdd_led(fdd_led),
 	.floppy_drives(floppy_drives),
+
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support
+	.phys_mask(phys_mask),
+	.phys_change_n(phys_change_n),
+	.phys_wprot_n(phys_wprot_n),
+	.phys_track0_n(phys_track0_n),
+	.phys_ready_n(phys_ready_n),
+	.phys_index(phys_index),
+	.motor_on_o(motor_on_o),
+	.fdd_dsig(fdd_dsig),
+	.fdd_datt(fdd_datt),
 
 	// fifo / track display
 	.trackdisp(trackdisp),

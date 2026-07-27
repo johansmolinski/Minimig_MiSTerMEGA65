@@ -213,6 +213,22 @@ module minimig
 	output 	     hdd_led,
 	input  [64:0] rtc,
 
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
+	// the MEGA65's real internal floppy can back one drive unit. fdd_ctrl taps
+	// the raw CIA-B port B drive-control byte for the connector; the fdd_phys_*
+	// inputs substitute the real conditioned status levels for that unit inside
+	// paula_floppy.v (see the muxes there). fdd_phys_mask = 0 -> bit-identical.
+	output  [7:0] fdd_ctrl,        // {_motor,_sel3,_sel2,_sel1,_sel0,side,direc,_step}
+	output  [3:0] fdd_motor_on,    // per-unit latched motor state
+	input   [3:0] fdd_phys_mask,   // one-hot: which unit is the physical drive
+	input         fdd_phys_change_n,
+	input         fdd_phys_wprot_n,
+	input         fdd_phys_track0_n,
+	input         fdd_phys_ready_n,
+	input         fdd_phys_index,
+	output [15:0] fdd_dsig,        // diag: store signature per read attempt
+	output  [7:0] fdd_datt,        // diag: read-attempt counter
+
 	//host controller interface (SPI)
 	input 	     IO_UIO,
 	input 	     IO_FPGA,
@@ -369,6 +385,11 @@ wire [15:0] IO_DOUT_PAULA;
 assign      IO_DOUT = IO_DOUT_PAULA;
 assign      IO_WAIT = IO_WAIT_PAULA | IO_WAIT_OSD;
 
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
+// export the raw CIA-B port B drive-control byte (same order as the ciab
+// portb_out unpack below) towards the MEGA65 floppy connector.
+assign      fdd_ctrl = {_motor,_sel3,_sel2,_sel1,_sel0,side,direc,_step};
+
 //--------------------------------------------------------------------------------------
 
 wire        bls;					//blitter slowdown - required for sharing bus cycles between Blitter and CPU
@@ -509,6 +530,16 @@ paula PAULA1
 	._ready(_ready),
 	._wprot(_wprot),
 	.index(index),
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support
+	.phys_mask(fdd_phys_mask),
+	.phys_change_n(fdd_phys_change_n),
+	.phys_wprot_n(fdd_phys_wprot_n),
+	.phys_track0_n(fdd_phys_track0_n),
+	.phys_ready_n(fdd_phys_ready_n),
+	.phys_index(fdd_phys_index),
+	.motor_on_o(fdd_motor_on),
+	.fdd_dsig(fdd_dsig),
+	.fdd_datt(fdd_datt),
 	.fdd_led(fdd_led),
 	.IO_ENA(IO_FPGA),
 	.IO_STROBE(IO_STROBE),

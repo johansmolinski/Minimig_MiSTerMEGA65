@@ -107,6 +107,24 @@ module paula_floppy
 	output        fdd_led,			//disk activity LED, active when DMA is on
 	input	[1:0]   floppy_drives,	//floppy drive number
 
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support.
+	// One drive unit can be backed by the MEGA65's real internal floppy: the
+	// four status lines towards CIA-A are open-collector AND-terms across the
+	// drives, so for the unit selected by phys_mask the virtual drive model's
+	// term is replaced by the conditioned real-pin level (still gated by that
+	// unit's /SEL, like a real drive gates its outputs on SELECT). The real
+	// INDEX is edge-injected into the CIA-B FLAG source. With phys_mask = 0
+	// every expression reduces bit-exactly to the original virtual-only logic.
+	input   [3:0] phys_mask,      // one-hot: which unit is the physical drive (0000 = none)
+	input         phys_change_n,  // conditioned real /DSKCHG level (active low)
+	input         phys_wprot_n,   // conditioned real /WPROT level (active low)
+	input         phys_track0_n,  // conditioned real /TRK0 level (active low)
+	input         phys_ready_n,   // synthesized real /RDY level (active low)
+	input         phys_index,     // qualified real INDEX level (ms-wide, active high)
+	output  [3:0] motor_on_o,     // per-unit latched motor state (sources the real MOTEA)
+	output [15:0] fdd_dsig,       // diagnostic: XOR of the first 1024 words stored per
+	output  [7:0] fdd_datt,       // track-read attempt + the attempt counter (see below)
+
 	// fifo / track display
 	output  [7:0] trackdisp,
 	output [13:0] secdisp,
@@ -287,7 +305,19 @@ always @(posedge clk) begin
 end
     
 // disk index pulses output
-assign index = |(~_sel & motor_on) & ~|rpm_pulse_cnt & sof;
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
+// the fake 300 RPM index serves only the virtual units; the physical unit
+// contributes its REAL index instead, edge-detected in the clk7_en grid
+// (CIA-B FLAG is a negative-edge interrupt on real silicon; cia_int latches
+// the level once per clk7 tick, so a one-tick pulse reproduces edge
+// semantics), gated like the fake one on "unit selected + motor on".
+//assign index = |(~_sel & motor_on) & ~|rpm_pulse_cnt & sof;  // (original)
+reg phys_index_del;
+always @(posedge clk) begin
+  if (clk7_en) phys_index_del <= phys_index;
+end
+assign index = (|(~_sel & motor_on & ~phys_mask) & ~|rpm_pulse_cnt & sof) |
+               (|(~_sel & motor_on &  phys_mask) & phys_index & ~phys_index_del);
 	
 //--------------------------------------------------------------------------------------
 //data out multiplexer
@@ -375,11 +405,24 @@ always @(posedge clk) begin
 end
 
 //_ready,_track0 and _change signals
-assign _change = &(_sel | _disk_change);
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
+// per-unit source substitution (see the port comment). The AND-terms model
+// the open-collector bus of a real Amiga: each drive contributes its level
+// only while its /SEL is asserted. phys_mask = 0 -> bit-exact originals.
+//assign _change = &(_sel | _disk_change);   // (original)
+//assign _wprot = &(_sel | disk_writable);   // (original)
+wire [3:0] chg_src_n = (~phys_mask & _disk_change ) | (phys_mask & {4{phys_change_n}});
+wire [3:0] wp_src_n  = (~phys_mask & disk_writable) | (phys_mask & {4{phys_wprot_n}});
+assign _change = &(_sel | chg_src_n);
 
-assign _wprot = &(_sel | disk_writable);
+assign _wprot = &(_sel | wp_src_n);
 
-assign  _track0 =&(_selx | _dsktrack0);
+// the selected unit decides the track0 source: real /TRK0 sensor for the
+// physical unit (trackdisk's recalibrate must see the REAL sensor, or head
+// position and the virtual counter would diverge), virtual counter else
+//assign  _track0 =&(_selx | _dsktrack0);    // (original)
+wire cur_track0_n = phys_mask[sel] ? phys_track0_n : _dsktrack0;
+assign  _track0 = _selx | cur_track0_n;
 
 //track control
 assign track = {dsktrack[sel],~side};
@@ -404,10 +447,24 @@ assign dsktrack79 = dsktrack[sel]==82;
 // drive _ready signal control
 // Amiga DD drive activates _ready whenever _sel is active and motor is off
 // or whenever _sel is active, motor is on and there is a disk inserted (not implemented - _ready is active when _sel is active)
-assign _ready   = (_sel[3] | ~(drives[1] & drives[0])) 
-        & (_sel[2] | ~drives[1]) 
-        & (_sel[1] | ~(drives[1] | drives[0])) 
-        & (_sel[0]);
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
+// rewritten as the same per-unit AND-reduce as the other status lines, so
+// the physical unit's synthesized /RDY (motor-off = ready for the drive-ID
+// protocol; motor-on = real spin-up gate) substitutes cleanly. The vrdy_n
+// vector reproduces the original drives-count gating bit-exactly.
+//assign _ready   = (_sel[3] | ~(drives[1] & drives[0]))
+//        & (_sel[2] | ~drives[1])
+//        & (_sel[1] | ~(drives[1] | drives[0]))
+//        & (_sel[0]);                          // (original)
+wire [3:0] vrdy_n = { ~(drives[1] & drives[0]), ~drives[1], ~(drives[1] | drives[0]), 1'b0 };
+wire [3:0] rdy_src_n = (~phys_mask & vrdy_n) | (phys_mask & {4{phys_ready_n}});
+assign _ready = &(_sel | rdy_src_n);
+
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: export the per-unit motor
+// latches - the physical unit's entry sources the real MOTEA pin (a PC
+// mechanism has a dedicated per-drive motor line; the latch IS the state a
+// real Amiga drive keeps internally after the /SEL-edge motor protocol).
+assign motor_on_o = motor_on;
 
 //--------------------------------------------------------------------------------------
 
@@ -512,8 +569,38 @@ always @(posedge clk) begin
   end
 end
 
+// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive bring-up
+// diagnostic - the store signature: XOR of the first 1024 words actually
+// written into the read FIFO of each track-read attempt (trackrd rising
+// edge re-arms, so the window starts at the word after the DSKSYNC match -
+// exactly the window the AExp track engine signs on its side of the io
+// channel). Equal signatures on real hardware prove the channel and the
+// store gating word-exact; nothing functional reads these registers.
+reg [15:0] dsig_acc  = 16'd0;
+reg [15:0] dsig_last = 16'd0;
+reg [10:0] dsig_cnt  = 11'd0;
+reg  [7:0] dsig_att  = 8'd0;
+reg        dsig_trd  = 1'b0;
+always @(posedge clk) begin
+  if (clk7_en) begin
+    dsig_trd <= trackrd;
+    if (trackrd & ~dsig_trd) begin
+      dsig_acc <= 16'd0;
+      dsig_cnt <= 11'd0;
+      dsig_att <= dsig_att + 8'd1;
+    end else if (fifo_wr & ~fifo_full & trackrd & (dsig_cnt != 11'd1024)) begin
+      dsig_acc <= dsig_acc ^ rx_data[15:0];
+      dsig_cnt <= dsig_cnt + 11'd1;
+      if (dsig_cnt == 11'd1023)
+        dsig_last <= dsig_acc ^ rx_data[15:0];
+    end
+  end
+end
+assign fdd_dsig = dsig_last;
+assign fdd_datt = dsig_att;
+
 assign fifo_reset = reset | ~dmaen;
-		
+
 //disk fifo / trackbuffer
 paula_floppy_fifo db1
 (

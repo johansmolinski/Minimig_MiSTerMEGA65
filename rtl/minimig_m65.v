@@ -73,6 +73,21 @@ module minimig_m65
 	output        fdd_led,
 	output        hdd_led,
 
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
+	// the MEGA65's real internal floppy as an Amiga drive unit (main.vhd /
+	// mega65.vhd drive the connector and condition the status levels; see the
+	// muxes in paula_floppy.v). fdd_phys_mask = 0 -> core bit-identical.
+	output  [7:0] fdd_ctrl,        // raw CIA-B byte {motor_n,sel3_n,sel2_n,sel1_n,sel0_n,side,direc,step_n}
+	output  [3:0] fdd_motor_on,    // per-unit latched motor state (active high)
+	input   [3:0] fdd_phys_mask,   // one-hot: which unit is the physical drive
+	input         fdd_phys_change_n,
+	input         fdd_phys_wprot_n,
+	input         fdd_phys_track0_n,
+	input         fdd_phys_ready_n,
+	input         fdd_phys_index,
+	output [15:0] fdd_dsig,        // diag: store signature per read attempt
+	output  [7:0] fdd_datt,        // diag: read-attempt counter
+
 	// MEGA65 battery-backed RTC (issue #13): MiSTer-format 65-bit conduit,
 	// [63:0] = MSM6242B BCD nibbles, [64] = "new value" toggle. Driven by the
 	// M2M framework from the board RTC; decoded by minimig.v at $DC0000.
@@ -172,6 +187,17 @@ minimig minimig_inst
 	.pwr_led       (pwr_led      ),
 	.fdd_led       (fdd_led      ),
 	.hdd_led       (hdd_led      ),
+	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support
+	.fdd_ctrl      (fdd_ctrl     ),
+	.fdd_motor_on  (fdd_motor_on ),
+	.fdd_dsig      (fdd_dsig     ),
+	.fdd_datt      (fdd_datt     ),
+	.fdd_phys_mask (fdd_phys_mask),
+	.fdd_phys_change_n(fdd_phys_change_n),
+	.fdd_phys_wprot_n (fdd_phys_wprot_n ),
+	.fdd_phys_track0_n(fdd_phys_track0_n),
+	.fdd_phys_ready_n (fdd_phys_ready_n ),
+	.fdd_phys_index   (fdd_phys_index   ),
 	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: MEGA65 battery RTC wired
 	// through to Minimig's MSM6242B clock at $DC0000 (issue #13).
 	.rtc           (rtc          ),
