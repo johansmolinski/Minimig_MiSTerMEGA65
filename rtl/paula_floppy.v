@@ -124,6 +124,10 @@ module paula_floppy
 	output  [3:0] motor_on_o,     // per-unit latched motor state (sources the real MOTEA)
 	output [15:0] fdd_dsig,       // diagnostic: XOR of the first 1024 words stored per
 	output  [7:0] fdd_datt,       // track-read attempt + the attempt counter (see below)
+	output [15:0] fdd_dc64,       // diagnostic: checkpoint prefixes of the same
+	output [15:0] fdd_dc256,      // signature after 64 / 256 stored words
+	output [127:0] fdd_dtap,      // diagnostic: the first 8 stored words of the attempt
+	output        fdd_dws,        // diagnostic: live ADKCON WORDSYNC level
 
 	// fifo / track display
 	output  [7:0] trackdisp,
@@ -578,6 +582,9 @@ end
 // store gating word-exact; nothing functional reads these registers.
 reg [15:0] dsig_acc  = 16'd0;
 reg [15:0] dsig_last = 16'd0;
+reg [15:0] dsig_c64  = 16'd0;
+reg [15:0] dsig_c256 = 16'd0;
+reg [127:0] dsig_tap = 128'd0;
 reg [10:0] dsig_cnt  = 11'd0;
 reg  [7:0] dsig_att  = 8'd0;
 reg        dsig_trd  = 1'b0;
@@ -585,19 +592,31 @@ always @(posedge clk) begin
   if (clk7_en) begin
     dsig_trd <= trackrd;
     if (trackrd & ~dsig_trd) begin
-      dsig_acc <= 16'd0;
-      dsig_cnt <= 11'd0;
-      dsig_att <= dsig_att + 8'd1;
+      dsig_acc  <= 16'd0;
+      dsig_cnt  <= 11'd0;
+      dsig_c64  <= 16'd0;
+      dsig_c256 <= 16'd0;
+      dsig_att  <= dsig_att + 8'd1;
     end else if (fifo_wr & ~fifo_full & trackrd & (dsig_cnt != 11'd1024)) begin
       dsig_acc <= dsig_acc ^ rx_data[15:0];
       dsig_cnt <= dsig_cnt + 11'd1;
+      if (dsig_cnt < 11'd8)
+        dsig_tap[{dsig_cnt[2:0], 4'b0000} +: 16] <= rx_data[15:0];
+      if (dsig_cnt == 11'd63)
+        dsig_c64 <= dsig_acc ^ rx_data[15:0];
+      if (dsig_cnt == 11'd255)
+        dsig_c256 <= dsig_acc ^ rx_data[15:0];
       if (dsig_cnt == 11'd1023)
         dsig_last <= dsig_acc ^ rx_data[15:0];
     end
   end
 end
-assign fdd_dsig = dsig_last;
-assign fdd_datt = dsig_att;
+assign fdd_dsig  = dsig_last;
+assign fdd_datt  = dsig_att;
+assign fdd_dc64  = dsig_c64;
+assign fdd_dc256 = dsig_c256;
+assign fdd_dtap  = dsig_tap;
+assign fdd_dws   = wordsync;
 
 assign fifo_reset = reset | ~dmaen;
 

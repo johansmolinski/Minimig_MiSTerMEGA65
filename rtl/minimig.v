@@ -228,6 +228,10 @@ module minimig
 	input         fdd_phys_index,
 	output [15:0] fdd_dsig,        // diag: store signature per read attempt
 	output  [7:0] fdd_datt,        // diag: read-attempt counter
+	output [15:0] fdd_dc64,        // diag: signature checkpoints (64/256 words)
+	output [15:0] fdd_dc256,
+	output [127:0] fdd_dtap,       // diag: first 8 stored words of the attempt
+	output        fdd_dws,         // diag: live ADKCON WORDSYNC level
 
 	//host controller interface (SPI)
 	input 	     IO_UIO,
@@ -540,6 +544,10 @@ paula PAULA1
 	.motor_on_o(fdd_motor_on),
 	.fdd_dsig(fdd_dsig),
 	.fdd_datt(fdd_datt),
+	.fdd_dc64(fdd_dc64),
+	.fdd_dc256(fdd_dc256),
+	.fdd_dtap(fdd_dtap),
+	.fdd_dws(fdd_dws),
 	.fdd_led(fdd_led),
 	.IO_ENA(IO_FPGA),
 	.IO_STROBE(IO_STROBE),

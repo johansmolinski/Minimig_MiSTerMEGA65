@@ -87,6 +87,10 @@ module minimig_m65
 	input         fdd_phys_index,
 	output [15:0] fdd_dsig,        // diag: store signature per read attempt
 	output  [7:0] fdd_datt,        // diag: read-attempt counter
+	output [15:0] fdd_dc64,        // diag: signature checkpoints (64/256 words)
+	output [15:0] fdd_dc256,
+	output [127:0] fdd_dtap,       // diag: first 8 stored words of the attempt
+	output        fdd_dws,         // diag: live ADKCON WORDSYNC level
 
 	// MEGA65 battery-backed RTC (issue #13): MiSTer-format 65-bit conduit,
 	// [63:0] = MSM6242B BCD nibbles, [64] = "new value" toggle. Driven by the
@@ -192,6 +196,10 @@ minimig minimig_inst
 	.fdd_motor_on  (fdd_motor_on ),
 	.fdd_dsig      (fdd_dsig     ),
 	.fdd_datt      (fdd_datt     ),
+	.fdd_dc64      (fdd_dc64     ),
+	.fdd_dc256     (fdd_dc256    ),
+	.fdd_dtap      (fdd_dtap     ),
+	.fdd_dws       (fdd_dws      ),
 	.fdd_phys_mask (fdd_phys_mask),
 	.fdd_phys_change_n(fdd_phys_change_n),
 	.fdd_phys_wprot_n (fdd_phys_wprot_n ),

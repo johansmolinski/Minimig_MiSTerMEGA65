@@ -119,6 +119,10 @@ module paula
 	output  [3:0] motor_on_o,
 	output [15:0] fdd_dsig,
 	output  [7:0] fdd_datt,
+	output [15:0] fdd_dc64,
+	output [15:0] fdd_dc256,
+	output [127:0] fdd_dtap,
+	output        fdd_dws,
 	// fifo / track display
 	output  [7:0] trackdisp,
 	output [13:0] secdisp,
@@ -291,6 +295,10 @@ paula_floppy pf1
 	.motor_on_o(motor_on_o),
 	.fdd_dsig(fdd_dsig),
 	.fdd_datt(fdd_datt),
+	.fdd_dc64(fdd_dc64),
+	.fdd_dc256(fdd_dc256),
+	.fdd_dtap(fdd_dtap),
+	.fdd_dws(fdd_dws),
 
 	// fifo / track display
 	.trackdisp(trackdisp),
