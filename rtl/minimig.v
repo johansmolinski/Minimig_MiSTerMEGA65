@@ -232,6 +232,11 @@ module minimig
 	output [15:0] fdd_dc256,
 	output [127:0] fdd_dtap,       // diag: first 8 stored words of the attempt
 	output        fdd_dws,         // diag: live ADKCON WORDSYNC level
+	// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: DSKBYTR observation
+	// surface for real-disk copy protections (see paula_floppy.v)
+	input  [15:0] fdd_obs_word,
+	input         fdd_obs_stb,
+	input         fdd_obs_legacy,
 
 	//host controller interface (SPI)
 	input 	     IO_UIO,
@@ -548,6 +553,10 @@ paula PAULA1
 	.fdd_dc256(fdd_dc256),
 	.fdd_dtap(fdd_dtap),
 	.fdd_dws(fdd_dws),
+	// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: DSKBYTR observation surface
+	.fdd_obs_word(fdd_obs_word),
+	.fdd_obs_stb(fdd_obs_stb),
+	.fdd_obs_legacy(fdd_obs_legacy),
 	.fdd_led(fdd_led),
 	.IO_ENA(IO_FPGA),
 	.IO_STROBE(IO_STROBE),

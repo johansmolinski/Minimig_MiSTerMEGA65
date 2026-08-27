@@ -129,6 +129,25 @@ module paula_floppy
 	output [127:0] fdd_dtap,      // diagnostic: the first 8 stored words of the attempt
 	output        fdd_dws,        // diagnostic: live ADKCON WORDSYNC level
 
+	// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: the DSKBYTR
+	// observation surface for real-disk copy protections (Rob Northen
+	// Copylock). The upstream DSKBYTR (assign below) is a constant stub
+	// (BYTEREADY=1 always, WORDEQUAL=1 always, data byte 0x00) - fine for
+	// DMA loaders and the ADF path, but a Copylock loader times the disk by
+	// CPU-polling DSKBYTR (poll WORDEQUAL for the sync, then count poll
+	// iterations while BYTEREADY toggles as raw MFM bytes arrive) to compare
+	// a 5%-short vs a 5%-long sector. With the stub that count is constant,
+	// the ratio is 0, the check fails and the game hangs. obs_word/obs_stb
+	// carry the reconstructed word stream of the MEGA65's real drive at the
+	// true (density-modulated) flux pace (tapped in main.vhd from the front
+	// end -> engine FIFO pop); from it the block below synthesises a faithful
+	// DSKBYTR. It engages ONLY while the physical unit is the selected,
+	// motor-on drive AND obs_legacy = 0, so every other read (ADF, no
+	// physical drive, or obs_legacy = 1) is bit-identical to before.
+	input  [15:0] obs_word,       // reconstructed word from the real drive
+	input         obs_stb,        // 1-clk pulse: a new obs_word arrived (clk domain)
+	input         obs_legacy,     // 1 = disable the observation surface (A/B: revert to the stub)
+
 	// fifo / track display
 	output  [7:0] trackdisp,
 	output [13:0] secdisp,
@@ -473,7 +492,88 @@ assign motor_on_o = motor_on;
 //--------------------------------------------------------------------------------------
 
 //disk data byte and status read
-assign dskbytr = reg_address_in[8:1]==DSKBYTR[8:1] ? {1'b1,(trackrd|trackwr),dsklen[14],5'b1_0000,8'h00} : 16'h00_00;
+//
+// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: DSKBYTR observation
+// surface (see the obs_word/obs_stb port comment). obs_gate is true only
+// while the physical drive is the SELECTED, motor-on unit and the A/B revert
+// bit is clear; then DSKBYTR returns a faithful BYTEREADY / WORDEQUAL / data
+// byte synthesised from the real reconstructed word stream. When the gate is
+// low (ADF read, no physical drive, or obs_legacy=1) the expression is the
+// original constant stub, byte-for-byte:
+//   assign dskbytr = reg_address_in[8:1]==DSKBYTR[8:1] ?
+//                    {1'b1,(trackrd|trackwr),dsklen[14],5'b1_0000,8'h00} : 16'h00_00; (original)
+wire obs_gate = |(phys_mask & ~_sel & motor_on) & ~obs_legacy;
+
+// The CPU DSKBYTR read access presents its address on the RGA bus for one
+// CCK period; rd_fall (falling edge of the address match) fires once at the
+// END of the access, so a read returns the CURRENT byte and only THEN
+// advances to the next - clear-on-read without disturbing the value the CPU
+// is latching this cycle.
+reg        obs_rd_d   = 1'b0;
+wire       obs_rd_lvl = (reg_address_in[8:1]==DSKBYTR[8:1]);
+wire       obs_rd_end = obs_rd_d & ~obs_rd_lvl;
+
+reg [15:0] obs_wordq  = 16'h0000;   // the latched word whose two bytes we emit
+reg  [7:0] obs_byte   = 8'h00;      // the byte currently presented at DSKBYTR[7:0]
+reg        obs_dskbyt = 1'b0;       // BYTEREADY: a byte is waiting to be read
+reg        obs_wordeq = 1'b0;       // WORDEQUAL: obs_wordq matches DSKSYNC
+reg        obs_have   = 1'b0;       // an emitted byte is still pending a read
+reg        obs_lo     = 1'b0;       // 0 = high byte pending, 1 = low byte pending
+
+always @(posedge clk) begin
+  obs_rd_d <= obs_rd_lvl;
+  if (reset) begin
+    obs_wordq <= 16'h0000; obs_byte <= 8'h00;
+    obs_dskbyt <= 1'b0; obs_wordeq <= 1'b0; obs_have <= 1'b0; obs_lo <= 1'b0;
+  end else if (obs_gate) begin
+    if (obs_stb) begin
+      // a fresh word from the real drive (arrives at true flux pace).
+      // newest-wins if a previous byte was still pending - cannot happen in
+      // the real-time PIO flow (words ~32 us apart, CPU reads in ~2.5 us).
+      obs_wordq  <= obs_word;
+      obs_wordeq <= (obs_word == dsksync);
+      if (wordsync & (obs_word == dsksync)) begin
+        // WORDSYNC=1: real Paula reframes AT the sync match and SWALLOWS the
+        // sync word - the first byte delivered after WORDEQUAL is the first
+        // POST-sync byte. Announce WORDEQUAL only and enqueue NOTHING, so the
+        // next word's bytes become buffer[0]. Rob Northen Copylock's get_sector
+        // depends on this: it reads the first stored word and requires it to be
+        // the MFM-encoded sector index (the word after the sync), retrying
+        // forever otherwise. Under WORDSYNC=0 there is no swallow (below).
+        obs_byte   <= 8'h00;
+        obs_dskbyt <= 1'b0;
+        obs_have   <= 1'b0;
+        obs_lo     <= 1'b0;
+      end else begin
+        obs_byte   <= obs_word[15:8];   // raw MFM high byte first
+        obs_dskbyt <= 1'b1;
+        obs_have   <= 1'b1;
+        obs_lo     <= 1'b0;
+      end
+    end else if (obs_rd_end) begin
+      // CPU has just read DSKBYTR: clear BYTEREADY, present the next byte.
+      if (obs_have & ~obs_lo) begin
+        obs_byte   <= obs_wordq[7:0];  // raw MFM low byte second
+        obs_dskbyt <= 1'b1;
+        obs_lo     <= 1'b1;
+      end else begin
+        obs_dskbyt <= 1'b0;            // both bytes consumed - wait for next word
+        obs_wordeq <= 1'b0;
+        obs_have   <= 1'b0;
+      end
+    end
+  end else begin
+    // gate closed: park the surface so a later engagement starts clean
+    obs_dskbyt <= 1'b0; obs_wordeq <= 1'b0; obs_have <= 1'b0; obs_lo <= 1'b0;
+  end
+end
+
+wire [15:0] dskbytr_obs = {obs_dskbyt, (trackrd|trackwr), dsklen[14], obs_wordeq, 4'b0000, obs_byte};
+
+assign dskbytr = reg_address_in[8:1]==DSKBYTR[8:1] ?
+                 (obs_gate ? dskbytr_obs
+                           : {1'b1,(trackrd|trackwr),dsklen[14],5'b1_0000,8'h00})
+                 : 16'h00_00;
 
 //disk sync register
 always @(posedge clk) begin

@@ -92,6 +92,12 @@ module minimig_m65
 	output [127:0] fdd_dtap,       // diag: first 8 stored words of the attempt
 	output        fdd_dws,         // diag: live ADKCON WORDSYNC level
 
+	// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: DSKBYTR observation
+	// surface for real-disk copy protections (Copylock); see paula_floppy.v
+	input  [15:0] fdd_obs_word,
+	input         fdd_obs_stb,
+	input         fdd_obs_legacy,
+
 	// MEGA65 battery-backed RTC (issue #13): MiSTer-format 65-bit conduit,
 	// [63:0] = MSM6242B BCD nibbles, [64] = "new value" toggle. Driven by the
 	// M2M framework from the board RTC; decoded by minimig.v at $DC0000.
@@ -200,6 +206,10 @@ minimig minimig_inst
 	.fdd_dc256     (fdd_dc256    ),
 	.fdd_dtap      (fdd_dtap     ),
 	.fdd_dws       (fdd_dws      ),
+	// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: DSKBYTR observation surface
+	.fdd_obs_word  (fdd_obs_word ),
+	.fdd_obs_stb   (fdd_obs_stb  ),
+	.fdd_obs_legacy(fdd_obs_legacy),
 	.fdd_phys_mask (fdd_phys_mask),
 	.fdd_phys_change_n(fdd_phys_change_n),
 	.fdd_phys_wprot_n (fdd_phys_wprot_n ),

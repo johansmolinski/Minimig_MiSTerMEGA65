@@ -123,6 +123,11 @@ module paula
 	output [15:0] fdd_dc256,
 	output [127:0] fdd_dtap,
 	output        fdd_dws,
+	// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: DSKBYTR observation
+	// surface for real-disk copy protections (see paula_floppy.v)
+	input  [15:0] fdd_obs_word,
+	input         fdd_obs_stb,
+	input         fdd_obs_legacy,
 	// fifo / track display
 	output  [7:0] trackdisp,
 	output [13:0] secdisp,
@@ -299,6 +304,11 @@ paula_floppy pf1
 	.fdd_dc256(fdd_dc256),
 	.fdd_dtap(fdd_dtap),
 	.fdd_dws(fdd_dws),
+
+	// MiSTer2MEGA65 (AExp Amiga 500 port), August 2026: DSKBYTR observation surface
+	.obs_word(fdd_obs_word),
+	.obs_stb(fdd_obs_stb),
+	.obs_legacy(fdd_obs_legacy),
 
 	// fifo / track display
 	.trackdisp(trackdisp),
