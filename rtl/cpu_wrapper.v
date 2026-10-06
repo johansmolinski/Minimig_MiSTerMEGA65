@@ -40,6 +40,14 @@
 //  * Toccata autoconfig is disabled (sound card logic not ported).        //
 //  * Zorro II/III fastram autoconfig logic is kept but self-disables      //
 //    with fastramcfg = 3'b000 (the only supported configuration).         //
+//                                                                          //
+// October 2026 (AExp fork, WIP-V2-A11-JS-01): Zorro II Fast RAM restored  //
+// for the 68000. With fastramcfg = 3'b011 the autoconfig chain announces   //
+// the 8 MB board at $200000, and its bus cycles leave the chip bus via     //
+// the ram* port again (ramsel / ramaddr / ramdin / ramlds / ramuds and     //
+// DTACKn from ramready). The parent serves that port from the board        //
+// SDRAM (CORE/vhdl/fastram_sdram.vhd). The sel_dd always-ack defence and   //
+// the rest of the June 2026 notes above stay in force.                     //
 //  * The port list is unchanged for compile compatibility with the way    //
 //    MiSTer's Minimig.sv instantiates this module. Unused inputs must be  //
 //    tied off by the parent, unused outputs left open.                    //
@@ -109,7 +117,13 @@ module cpu_wrapper
 // sel_zram needs autoconfig'd fastram, sel_rtg needs a 32-bit address).
 //assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_dd | sel_rtg);
 //assign ramshared    = sel_dd;
-assign ramsel       = 1'b0;
+// MiSTer2MEGA65 (AExp fork), October 2026: Zorro II Fast RAM restored. The
+// original expression minus sel_dd, which keeps the $DD4000-$DD5FFF always-ack
+// defence above: with 68000 + fastramcfg=011 only sel_zram can assert
+// (sel_chipram/sel_kickram need turbo, sel_rtg a 32-bit address, and the Z3
+// selects need Zorro III autoconfig, which a 68000 never gets).
+//assign ramsel       = 1'b0;
+assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
 assign ramshared    = 1'b0;
 
 // NMI
@@ -135,12 +149,15 @@ wire [15:0] ramdat;
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: SDRAM cpu-port outputs tied
 // inactive (ports kept only for compile compatibility - leave open in parent).
-//assign ramlds = sel_rtg ? uds_in : lds_in;
-//assign ramuds = sel_rtg ? lds_in : uds_in;
-//assign ramdin = sel_rtg ? {cpu_dout[7:0],cpu_dout[15:8]} : cpu_dout;
-assign ramlds = 1'b0;
-assign ramuds = 1'b0;
-assign ramdin = 16'h0000;
+// MiSTer2MEGA65 (AExp fork), October 2026: restored for the Zorro II Fast RAM
+// (the June 2026 tie-offs are kept below as comments). The strobes are the
+// CPU's active-low UDS/LDS.
+//assign ramlds = 1'b0;
+//assign ramuds = 1'b0;
+//assign ramdin = 16'h0000;
+assign ramlds = sel_rtg ? uds_in : lds_in;
+assign ramuds = sel_rtg ? lds_in : uds_in;
+assign ramdin = sel_rtg ? {cpu_dout[7:0],cpu_dout[15:8]} : cpu_dout;
 assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 
 //       Main  DDx  RTG  8M  128M  256M
@@ -165,7 +182,18 @@ assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 //assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
 //assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
 //assign ramaddr[15:1]  = cpu_addr[15:1];
-assign ramaddr[28:1]  = 28'd0;
+// MiSTer2MEGA65 (AExp fork), October 2026: original mapping restored for the
+// Zorro II Fast RAM. For the window $200000-$9FFFFF it yields
+// ramaddr[22:1] = cpu_addr[22:1], a 1:1 map onto 8 MB ($800000-$9FFFFF wraps
+// onto the first 2 MB), which is all the parent uses.
+//assign ramaddr[28:1]  = 28'd0;
+assign ramaddr[28]    = sel_zram & ~sel_z3ram0;
+assign ramaddr[27]    = sel_zram & (~sel_z3ram1 | cpu_addr[27]);
+assign ramaddr[26:23] = (sel_z3ram0 | sel_z3ram1) ? cpu_addr[26:23]: (sel_rtg ? 4'b1110 : {4{sel_dd}});
+assign ramaddr[22:19] = {4{sel_dd}} | cpu_addr[22:19];
+assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
+assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
+assign ramaddr[15:1]  = cpu_addr[15:1];
 
 assign fastchip_lds = lds_in;
 assign fastchip_uds = uds_in;
@@ -301,8 +329,11 @@ fx68k cpu_inst_o
 	// MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: ramsel is tied to 0
 	// (no SDRAM cpu port), so DTACKn always comes from the chip bus, which
 	// minimig_m68k_bridge.v acknowledges for every address - no bus hangs.
-	//.DTACKn(ramsel ? ~ramready : chip_dtack),
-	.DTACKn(chip_dtack),
+	// MiSTer2MEGA65 (AExp fork), October 2026: original restored for the
+	// Zorro II Fast RAM. ramsel no longer includes sel_dd, so every non-Fast-RAM
+	// cycle still gets its DTACK from the chip bus.
+	//.DTACKn(chip_dtack),
+	.DTACKn(ramsel ? ~ramready : chip_dtack),
 
 	.FC0(fc_o[0]),
 	.FC1(fc_o[1]),
@@ -493,6 +524,8 @@ reg       z3ram_ena1;
 //  * With fastramcfg tied to 3'b000 by the parent, ac_memcard resets to 0 -
 //    the whole Zorro autoconfig block is then constant and synthesizes away,
 //    which is why it is kept in source (cheap and self-disabling).
+//    October 2026 (AExp fork): the parent now drives 3'b011 (8 MB Zorro II)
+//    or 3'b000 from the OSM, so this block is live again.
 always @(posedge clk) begin : autoconfig_blk
 	reg old_uds;
 	old_uds <= chip_uds;
