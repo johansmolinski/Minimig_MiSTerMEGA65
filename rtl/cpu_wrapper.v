@@ -48,6 +48,14 @@
 // DTACKn from ramready). The parent serves that port from the board        //
 // SDRAM (CORE/vhdl/fastram_sdram.vhd). The sel_dd always-ack defence and   //
 // the rest of the June 2026 notes above stay in force.                     //
+//                                                                          //
+// October 2026 (AExp fork): a second autoconfig board, an IDE controller   //
+// that is register-compatible with RIPPLE (manufacturer 5194, product 7),  //
+// so that the open-source lide.device boot ROM drives it. ide_ena puts it  //
+// into the chain after the Fast RAM board; its bus cycles leave the chip   //
+// bus like the Fast RAM ones, through the new ext_* port (address, data    //
+// and strobes are the chip_* outputs). The board itself is                 //
+// CORE/vhdl/ide_board.vhd.                                                 //
 //  * The port list is unchanged for compile compatibility with the way    //
 //    MiSTer's Minimig.sv instantiates this module. Unused inputs must be  //
 //    tied off by the parent, unused outputs left open.                    //
@@ -99,6 +107,12 @@ module cpu_wrapper
 	output            ramuds,
 	output            ramshared,
 
+	// MiSTer2MEGA65 (AExp fork), October 2026: RIPPLE-compatible IDE board
+	input             ide_ena,         // board present in the autoconfig chain
+	output            ext_sel,         // bus cycle to the configured board
+	input      [15:0] ext_dout,        // read data of the board
+	input             ext_ready,       // DTACK of the board
+
 	output            toccata_ena,
 	output reg  [7:0] toccata_base,
 
@@ -125,6 +139,11 @@ module cpu_wrapper
 //assign ramsel       = 1'b0;
 assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
 assign ramshared    = 1'b0;
+
+// MiSTer2MEGA65 (AExp fork), October 2026: the IDE board occupies 128 KB at
+// the base Kickstart assigned during autoconfig (see AUTOCONFIG below).
+wire sel_ide        = ide_configured && !cpu_addr[31:24] && (cpu_addr[23:17] == ide_base[7:1]);
+assign ext_sel      = cpu_req & ~sel_nmi_vector & sel_ide;
 
 // NMI
 always @(posedge clk) nmi_addr <= vbr + 32'h7c;
@@ -201,7 +220,9 @@ assign fastchip_rnw = wr;
 
 reg  [31:0] cpu_addr;
 reg  [15:0] cpu_dout;
-wire [15:0] cpu_din = ramsel ? ramdat : fastchip_selack ? fastchip_dout : {sel_autoconfig ? autocfg_data : chip_data[15:12], chip_data[11:0]};
+// MiSTer2MEGA65 (AExp fork), October 2026: + the IDE board (ext_*)
+//wire [15:0] cpu_din = ramsel ? ramdat : fastchip_selack ? fastchip_dout : {sel_autoconfig ? autocfg_data : chip_data[15:12], chip_data[11:0]};
+wire [15:0] cpu_din = ramsel ? ramdat : ext_sel ? ext_dout : fastchip_selack ? fastchip_dout : {sel_autoconfig ? autocfg_data : chip_data[15:12], chip_data[11:0]};
 reg         wr;
 reg         uds_in;
 reg         lds_in;
@@ -239,7 +260,7 @@ always @* begin
 		uds_in       = uds_o;
 		lds_in       = lds_o;
 		reset_out    = reset_out_o;
-		chip_as      = ramsel | as_o;
+		chip_as      = ramsel | ext_sel | as_o;      // AExp: ext_sel added
 		chip_rw      = wr_o;
 		chip_uds     = uds_o;
 		chip_lds     = lds_o;
@@ -333,7 +354,8 @@ fx68k cpu_inst_o
 	// Zorro II Fast RAM. ramsel no longer includes sel_dd, so every non-Fast-RAM
 	// cycle still gets its DTACK from the chip bus.
 	//.DTACKn(chip_dtack),
-	.DTACKn(ramsel ? ~ramready : chip_dtack),
+	// MiSTer2MEGA65 (AExp fork), October 2026: + the IDE board (ext_ready)
+	.DTACKn(ramsel ? ~ramready : ext_sel ? ~ext_ready : chip_dtack),
 
 	.FC0(fc_o[0]),
 	.FC1(fc_o[1]),
@@ -453,6 +475,9 @@ end
 
 reg       ac_toccata;
 reg [2:0] ac_memcard;
+reg       ac_ide;          // AExp: the IDE board is the board being configured
+reg       ide_configured;  // AExp: the IDE board has its base address
+reg [7:0] ide_base;        // AExp: A23..A16 of the IDE board
 reg [3:0] autocfg_data;
 
 always @(*) begin
@@ -474,6 +499,24 @@ always @(*) begin
 			6'b001011: autocfg_data = 4'b0011;
 			6'b010011: autocfg_data = 4'b1110; //serial=1
 			  default:;
+		endcase
+	end
+	// MiSTer2MEGA65 (AExp fork), October 2026: the IDE board, values of RIPPLE
+	// (github.com/LIV2/RIPPLE-IDE RTL/autoconfig.v): Zorro II I/O board with
+	// a DiagArea ROM at offset 0x0008, 128 KB, product 7, manufacturer 5194.
+	// Registers 0x00/0x02 are not inverted, all others are.
+	else if(ac_ide) begin
+		case (chip_addr[6:1])
+			6'h00: autocfg_data = 4'b1101; // Zorro II, not memory, DiagArea valid
+			6'h01: autocfg_data = 4'b0010; // 128 KB
+			6'h02: autocfg_data = ~4'h0;   // product 7
+			6'h03: autocfg_data = ~4'h7;
+			6'h08: autocfg_data = ~4'h1;   // manufacturer 0x144A = 5194
+			6'h09: autocfg_data = ~4'h4;
+			6'h0A: autocfg_data = ~4'h4;
+			6'h0B: autocfg_data = ~4'hA;
+			6'h17: autocfg_data = ~4'h8;   // er_InitDiagVec = 0x0008
+			default: ;                     // 4'b1111 = inverted 0
 		endcase
 	end
 	// Zorro II other cards
@@ -509,7 +552,9 @@ always @(*) begin
 	end
 end
 
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata); //$E80000 - $E8FFFF
+// MiSTer2MEGA65 (AExp fork), October 2026: + ac_ide
+//wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata); //$E80000 - $E8FFFF
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_ide || ac_toccata); //$E80000 - $E8FFFF
 
 reg       z2ram_ena;
 reg [4:0] z3ram_base0;
@@ -535,6 +580,9 @@ always @(posedge clk) begin : autoconfig_blk
 		//ac_toccata  <= 1; // MiSTer2MEGA65 (AExp): Toccata not ported, see above
 		ac_toccata  <= 0;
 		toccata_base <= 8'h00; // MiSTer2MEGA65 (AExp): give the (now never written) reg a defined value
+		ac_ide         <= ide_ena;
+		ide_configured <= 0;
+		ide_base       <= 8'h00;
 		z2ram_ena   <= 0;
 		z3ram_ena0  <= 0;
 		z3ram_ena1  <= 0;
@@ -546,6 +594,21 @@ always @(posedge clk) begin : autoconfig_blk
 			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - config, ZII RAM
 				z2ram_ena <= 1;
 				ac_memcard <= 0;
+			end
+		end
+		// MiSTer2MEGA65 (AExp fork), October 2026: the IDE board. Kickstart
+		// writes the base address byte to 0x48 (and its low nibble to 0x4A
+		// before, which we do not need: a byte write to an even address puts
+		// the byte on both halves of the data bus). 0x4C = "shut up": there is
+		// no room for the board, it stays unconfigured.
+		else if(ac_ide) begin
+			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - config
+				ide_base       <= cpu_dout[15:8];
+				ide_configured <= 1;
+				ac_ide         <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_ide         <= 0;
 			end
 		end
 		else if(ac_toccata) begin
