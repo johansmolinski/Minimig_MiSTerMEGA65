@@ -310,6 +310,8 @@ assign desc = ~line & bltcon1[1]; // descending blit mode
 assign efe = ~line & bltcon1[4]; // exclusive fill mode
 assign ife = ~line & bltcon1[3]; // inclusive fill mode
 
+// MiSTer2MEGA65 (AExp Amiga 500 port), October 2026: BLT_FROZEN handling
+// backported from upstream MiSTer commit 5578afd (PR #236).
 // Real Amiga blitter freezes when BLTCON1 disables fill
 // while an extra-cycle D-only fill blit is still active.
 wire bltcon1_write =
@@ -656,6 +658,12 @@ wire   linesub = !bltcon1[4] &&  bltcon1[2] ||  bltcon1[4] &&  bltcon1[3] && !si
 // blitter FSM
 always @(posedge clk)
   if (clk7_en) begin
+    // MiSTer2MEGA65 (AExp Amiga 500 port), October 2026: upstream 5578afd (PR #236).
+    // Original:
+    //if (reset)
+    //  blt_state <= BLT_IDLE;
+    //else
+    //  blt_state <= blt_next;
     if (reset)
       blt_state <= BLT_IDLE;
     else if (blt_state == BLT_FROZEN) begin

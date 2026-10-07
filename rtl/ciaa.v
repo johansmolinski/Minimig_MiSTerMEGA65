@@ -104,7 +104,7 @@ module ciaa
 	output [7:0] data_out,      // CPU data bus output
 	input        tick,          // TOD tick input (50/60 Hz)
 	input        eclk,          // E clock (system clock / 10)
-	input        cnt_in,        // CNT pin input
+	input        cnt_in,        // CNT pin input (AExp: backported from upstream b013ce3, PR #230)
 	output       irq,           // Interrupt request to CPU
 
 	// Port A connections (disk and game port control)

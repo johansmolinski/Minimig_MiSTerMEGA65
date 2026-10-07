@@ -111,6 +111,10 @@ always @(*) begin
 	if (reg_address_in[8:1]==VPOSR[8:1] || reg_address_in[8:1]==VPOSW[8:1])
 		data_out[15:0] = {long_frame,1'b0,ecs,ntsc,2'b00,{2{aga}},long_line,4'b0000,vpos[10:8]};
 	else if (reg_address_in[8:1]==VHPOSR[8:1] || reg_address_in[8:1]==VHPOSW[8:1])
+		// MiSTer2MEGA65 (AExp Amiga 500 port), October 2026: VHPOSR reads one colour
+		// clock behind the internal counter, as a real Agnus does - backported from
+		// upstream MiSTer commit 06f30af (PR #234). Original:
+		//data_out[15:0] = {vpos[7:0],hpos[8:1]};
 		data_out[15:0] = {vpos[7:0],|hpos[8:1] ? hpos[8:1] - 8'd1 : ersy ? 8'd0 : htotal[8:1]};
 	else
 		data_out[15:0] = 0;
@@ -358,6 +362,10 @@ end
 //in interlaced mode every second frame is vtotal+1 long
 wire last_line = long_frame ? extra_line : vpos_equ_vtotal;
 
+// MiSTer2MEGA65 (AExp Amiga 500 port), October 2026: the field flag for the
+// video output only toggles while LACE is set - backported from upstream
+// MiSTer commit d16cd84 (fixes MiSTer issue #231). Original:
+//assign field1 = ~long_frame;
 assign field1 = (~long_frame) & lace;
 
 //generate end of frame signal
