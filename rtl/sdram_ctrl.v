@@ -45,7 +45,13 @@ module sdram_ctrl
 	output reg        sd_ras,
 	output reg        sd_cas,
 	output reg  [1:0] sd_dqm,
-	inout  reg [15:0] sd_data,
+	// MiSTer2MEGA65 (Megamiga, fork of AExp), October 2026: a procedurally driven
+	// "inout reg" is a Quartus extension (Icarus rejects it, Vivado may infer it
+	// badly): the data bus is now an output register plus an output-enable
+	// register and a continuous tri-state assignment - same timing, and the shape
+	// Vivado packs into the IOB (OFF + TFF + IFF).
+	//inout  reg [15:0] sd_data,
+	inout      [15:0] sd_data,
 	output reg        sd_clk,
 	output            sd_cke,
 	// chip
@@ -68,6 +74,10 @@ module sdram_ctrl
 	output            ramready
 );
 
+reg [15:0] sd_data_out;
+reg        sd_data_oe = 0;
+assign sd_data = sd_data_oe ? sd_data_out : 16'hZZZZ;
+
 assign sd_cs = 0;
 assign sd_cke = 1;
 
@@ -77,6 +87,20 @@ localparam [2:0]
 	CHIP = 1,
 	CPU_READCACHE = 2,
 	CPU_WRITECACHE = 3;
+
+// MiSTer2MEGA65 (Megamiga), October 2026: these registers were declared below
+// their first use (in the cpu_cache_new port map and in early always blocks).
+// Quartus resolves that; Vivado creates IMPLICIT 1-BIT NETS at such port
+// connections ("already implicitly declared"), which would cut e.g. sdata_reg to
+// one bit inside the cache. All are declared here now; the original declarations
+// below are kept as comments.
+reg        cache_fill;
+reg  [3:0] initstate;
+reg        init_done;
+reg  [3:0] sdram_state;
+reg  [2:0] slot_type = IDLE;
+reg [15:0] sdata_reg;
+reg        chipWE;
 
 
 ////////////////////////////////////////
@@ -131,7 +155,7 @@ cpu_cache_new cpu_cache
 	.snoop_bs         ({!chipU, !chipL})       // snoop byte selects
 );
 
-reg cache_fill;
+//reg cache_fill;
 always @ (posedge sysclk) begin
 	cache_fill <= 0;
 
@@ -213,8 +237,8 @@ assign chip48 = {chip48_1, chip48_2, chip48_3};
 
 
 //// init counter ////
-reg [3:0] initstate;
-reg       init_done;
+//reg [3:0] initstate;
+//reg       init_done;
 always @ (posedge sysclk) begin
 	if(!reset) begin
 		initstate <= 0;
@@ -229,7 +253,7 @@ end
 
 
 //// sdram state ////
-reg [3:0] sdram_state;
+//reg [3:0] sdram_state;
 always @ (posedge sysclk) begin
 	reg old_7m;
 
@@ -241,9 +265,9 @@ end
 
 //// sdram control ////
 
-reg  [2:0] slot_type = IDLE;
-reg [15:0] sdata_reg;
-reg        chipWE;
+//reg  [2:0] slot_type = IDLE;
+//reg [15:0] sdata_reg;
+//reg        chipWE;
 
 always @ (posedge sysclk) begin
 	reg        cas_sd_cas;
@@ -259,7 +283,8 @@ always @ (posedge sysclk) begin
 		sd_ras                <= 1;
 		sd_cas                <= 1;
 		sd_we                 <= 1;
-		sd_data               <= 16'hZZZZ;
+		//sd_data               <= 16'hZZZZ;
+		sd_data_oe            <= 0;
 		chipWE                <= 0;
 	end
 
@@ -349,7 +374,9 @@ always @ (posedge sysclk) begin
 				sd_cas          <= cas_sd_cas;
 				sd_dqm          <= 0;
 				if(!cas_sd_we) begin
-					sd_data      <= datawr;
+					//sd_data      <= datawr;
+					sd_data_out  <= datawr;
+					sd_data_oe   <= 1;
 					sd_addr[12:11]<= cas_dqm;
 					sd_dqm       <= cas_dqm;
 					sd_we        <= 0;
