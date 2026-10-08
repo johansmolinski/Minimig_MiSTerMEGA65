@@ -56,6 +56,15 @@
 // bus like the Fast RAM ones, through the new ext_* port (address, data    //
 // and strobes are the chip_* outputs). The board itself is                 //
 // CORE/vhdl/ide_board.vhd.                                                 //
+// October 2026 (Megamiga): the 68020 is back. TG68KdotC_Kernel is        //
+// instantiated again next to fx68k and selected with cpucfg (00 = 68000   //
+// fx68k, 11 = 68020 TG68K), both on the 28 MHz clock as on MiSTer. The    //
+// Zorro III boards of MiSTer (128/256 MB, DDR3) are replaced by ONE 16 MB //
+// Zorro III board (z3ena, 68020 only, needs Kickstart 2.0+), whose cycles //
+// leave on the ram* port with ramaddr[28:27] = 2'b10 (Zorro II = 2'b11).  //
+// The RTG window ($02xxxxxx) is not decoded. For the 68020 the IDE board  //
+// select drops for one clock after every completed access, because the   //
+// board ends a bus cycle only when its select goes away (68000 AS).        //
 //  * The port list is unchanged for compile compatibility with the way    //
 //    MiSTer's Minimig.sv instantiates this module. Unused inputs must be  //
 //    tied off by the parent, unused outputs left open.                    //
@@ -109,6 +118,8 @@ module cpu_wrapper
 
 	// MiSTer2MEGA65 (AExp fork), October 2026: RIPPLE-compatible IDE board
 	input             ide_ena,         // board present in the autoconfig chain
+	// Megamiga, October 2026: the 16 MB Zorro III board (68020 only)
+	input             z3ena,
 	output            ext_sel,         // bus cycle to the configured board
 	input      [15:0] ext_dout,        // read data of the board
 	input             ext_ready,       // DTACK of the board
@@ -137,13 +148,22 @@ module cpu_wrapper
 // (sel_chipram/sel_kickram need turbo, sel_rtg a 32-bit address, and the Z3
 // selects need Zorro III autoconfig, which a 68000 never gets).
 //assign ramsel       = 1'b0;
-assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
+// Megamiga, October 2026: without sel_rtg (no RTG framebuffer in this core)
+//assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
+assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram);
 assign ramshared    = 1'b0;
 
 // MiSTer2MEGA65 (AExp fork), October 2026: the IDE board occupies 128 KB at
 // the base Kickstart assigned during autoconfig (see AUTOCONFIG below).
 wire sel_ide        = ide_configured && !cpu_addr[31:24] && (cpu_addr[23:17] == ide_base[7:1]);
-assign ext_sel      = cpu_req & ~sel_nmi_vector & sel_ide;
+// Megamiga, October 2026: for the 68020, the select drops for one clock after
+// every completed access (ext_done): the board holds its ready until the
+// select goes away, and TG68K, unlike the 68000, has no AS gap between two
+// consecutive accesses (lide.device reads the data register with MOVEM).
+//assign ext_sel      = cpu_req & ~sel_nmi_vector & sel_ide;
+assign ext_sel      = cpu_req & ~sel_nmi_vector & sel_ide & ~ext_done;
+reg ext_done;
+always @(posedge clk) ext_done <= (cpucfg[1:0] != 2'b00) & ext_sel & ext_ready;
 
 // NMI
 always @(posedge clk) nmi_addr <= vbr + 32'h7c;
@@ -151,7 +171,10 @@ always @(posedge clk) nmi_addr <= vbr + 32'h7c;
 wire sel_z3ram0 = (cpu_addr[31:27] == z3ram_base0) && z3ram_ena0;
 wire sel_z3ram1 = (cpu_addr[31:28] == z3ram_base1) && z3ram_ena1;
 wire sel_z2ram  = !cpu_addr[31:24] && (cpu_addr[23] ^ |cpu_addr[22:21]) && z2ram_ena; // addr[23:21] = 1..4
-wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram;
+// Megamiga, October 2026: + the 16 MB Zorro III board (base A31..A24 from autoconfig)
+wire sel_z3ram16 = (cpu_addr[31:24] == z3_base) && z3_configured;
+//wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram;
+wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram | sel_z3ram16;
 wire sel_dd     = (cpu_addr[31:16] == 16'h00DD) && (cpu_addr[15:13] == 'b010);
 wire sel_rtg    = (cpu_addr[31:24] == 8'h02);
 
@@ -206,13 +229,24 @@ assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 // ramaddr[22:1] = cpu_addr[22:1], a 1:1 map onto 8 MB ($800000-$9FFFFF wraps
 // onto the first 2 MB), which is all the parent uses.
 //assign ramaddr[28:1]  = 28'd0;
-assign ramaddr[28]    = sel_zram & ~sel_z3ram0;
-assign ramaddr[27]    = sel_zram & (~sel_z3ram1 | cpu_addr[27]);
-assign ramaddr[26:23] = (sel_z3ram0 | sel_z3ram1) ? cpu_addr[26:23]: (sel_rtg ? 4'b1110 : {4{sel_dd}});
-assign ramaddr[22:19] = {4{sel_dd}} | cpu_addr[22:19];
-assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
-assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
-assign ramaddr[15:1]  = cpu_addr[15:1];
+// Megamiga, October 2026: the mapping the parent (main.vhd) expects:
+// ramaddr[28:27] = 2'b11 Zorro II (8 MB, [22:1]), 2'b10 Zorro III (16 MB,
+// [23:1]), 2'b00 everything else (turbo Chip/Kickstart, banked like
+// minimig_sram_bridge.v). sel_dd never reaches the ram* port (see ramsel).
+//assign ramaddr[28]    = sel_zram & ~sel_z3ram0;
+//assign ramaddr[27]    = sel_zram & (~sel_z3ram1 | cpu_addr[27]);
+//assign ramaddr[26:23] = (sel_z3ram0 | sel_z3ram1) ? cpu_addr[26:23]: (sel_rtg ? 4'b1110 : {4{sel_dd}});
+//assign ramaddr[22:19] = {4{sel_dd}} | cpu_addr[22:19];
+//assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
+//assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
+//assign ramaddr[15:1]  = cpu_addr[15:1];
+assign ramaddr[28]    = sel_z2ram | sel_z3ram16;
+assign ramaddr[27]    = sel_z2ram;
+assign ramaddr[26:24] = 3'b000;
+assign ramaddr[23]    = sel_z3ram16 & cpu_addr[23];
+assign ramaddr[22:19] = cpu_addr[22:19];
+assign ramaddr[18]    = (sel_kicklower & bootrom) | cpu_addr[18];
+assign ramaddr[17:1]  = cpu_addr[17:1];
 
 assign fastchip_lds = lds_in;
 assign fastchip_uds = uds_in;
@@ -280,16 +314,61 @@ end
 // constants so the cpucfg muxes above still elaborate unchanged:
 //   cpustate_p = 2'b01 ("no memaccess") so cpu_req would stay low,
 //   nwr/nuds/nlds = 1 (active low, deasserted), nresetout = 1 (not in reset).
-wire [15:0] cpu_dout_p  = 16'h0000;
-wire [31:0] cpu_addr_p  = 32'h00000000;
-wire  [1:0] cpustate_p  = 2'b01;
-wire  [3:0] cacr_p      = 4'b0000;
-wire [31:0] vbr_p       = 32'h00000000;
-wire        wr_p        = 1'b1;
-wire        uds_p       = 1'b1;
-wire        lds_p       = 1'b1;
-wire        reset_out_p = 1'b1;
-wire        longword    = 1'b0;
+// Megamiga, October 2026: TG68K restored (the June 2026 tie-offs below are kept
+// as comments). clkena also completes IDE board cycles (ext_ready).
+//wire [15:0] cpu_dout_p  = 16'h0000;
+//wire [31:0] cpu_addr_p  = 32'h00000000;
+//wire  [1:0] cpustate_p  = 2'b01;
+//wire  [3:0] cacr_p      = 4'b0000;
+//wire [31:0] vbr_p       = 32'h00000000;
+//wire        wr_p        = 1'b1;
+//wire        uds_p       = 1'b1;
+//wire        lds_p       = 1'b1;
+//wire        reset_out_p = 1'b1;
+//wire        longword    = 1'b0;
+wire [15:0] cpu_dout_p;
+wire [31:0] cpu_addr_p;
+wire  [1:0] cpustate_p;
+wire  [3:0] cacr_p;
+wire [31:0] vbr_p;
+wire        wr_p;
+wire        uds_p;
+wire        lds_p;
+wire        reset_out_p;
+wire        longword;
+
+TG68KdotC_Kernel
+#(
+	.sr_read(2),        // 0=>user,   1=>privileged,    2=>switchable with CPU(0)
+	.vbr_stackframe(2), // 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
+	.extaddr_mode(2),   // 0=>no,     1=>yes,           2=>switchable with CPU(1)
+	.mul_mode(2),       // 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no MUL,
+	.div_mode(2),       // 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no DIV,
+	.bitfield(2)        // 0=>no,     1=>yes,           2=>switchable with CPU(1)
+)
+cpu_inst_p
+(
+	.clk(clk),
+	.nreset(reset),
+	//.clkena_in(~cpu_req | chipready | ramready | fastchip_ready),
+	.clkena_in(~cpu_req | chipready | ramready | fastchip_ready | ext_ready),
+	.data_in(cpu_din),
+	.ipl(cpu_ipl),
+	.ipl_autovector(1),
+	.regin_out(),
+	.addr_out(cpu_addr_p),
+	.data_write(cpu_dout_p),
+	.nwr(wr_p),
+	.nuds(uds_p),
+	.nlds(lds_p),
+	.nresetout(reset_out_p),
+	.longword(longword),
+
+	.cpu(cpucfg),
+	.busstate(cpustate_p),		// 0: fetch code, 1: no memaccess, 2: read data, 3: write data
+	.cacr_out(cacr_p),
+	.vbr_out(vbr_p)
+);
 
 //TG68KdotC_Kernel
 //#(
@@ -400,7 +479,9 @@ end
 reg       chipreq;
 reg [2:0] cpu_ipl;
 always @(posedge clk) begin
-	chipreq <= cpu_req & ~ramsel & ~fastchip_selack;
+	// Megamiga, October 2026: + ~ext_sel (IDE board cycles do not touch the chip bus)
+	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack;
+	chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~(sel_ide & ext_done);
 	cpu_ipl <= ipl_i;
 end
 
@@ -476,6 +557,9 @@ end
 reg       ac_toccata;
 reg [2:0] ac_memcard;
 reg       ac_ide;          // AExp: the IDE board is the board being configured
+reg       ac_z3;           // Megamiga: the 16 MB Zorro III board is being configured
+reg       z3_configured;   // Megamiga: the Zorro III board has its base address
+reg [7:0] z3_base;         // Megamiga: A31..A24 of the Zorro III board
 reg       ide_configured;  // AExp: the IDE board has its base address
 reg [7:0] ide_base;        // AExp: A23..A16 of the IDE board
 reg [3:0] autocfg_data;
@@ -498,6 +582,24 @@ always @(*) begin
 			6'b001010: autocfg_data = 4'b0110;
 			6'b001011: autocfg_data = 4'b0011;
 			6'b010011: autocfg_data = 4'b1110; //serial=1
+			  default:;
+		endcase
+	end
+	// Megamiga, October 2026: the 16 MB Zorro III board (68020 + Kickstart 2.0+).
+	// MiSTer's 128/256 MB entries below with the size code 16 MB (extended
+	// size: 000). Registers 0x00/0x02 are not inverted, all others are.
+	else if(ac_z3) begin
+		case (chip_addr[6:1])
+			6'b000000: autocfg_data = 4'b1010;	// Zorro-III card, add mem, no ROM
+			6'b000001: autocfg_data = 4'b0000;	// 16 MB (extended size code 000)
+			6'b000010: autocfg_data = 4'b1110;	// ProductID=0x10 (only setting upper nibble)
+			6'b000100: autocfg_data = 4'b0000;	// Memory card, not silenceable, Extended size, reserved.
+			6'b000101: autocfg_data = 4'b1111;	// logical size matches physical size
+			6'b001000: autocfg_data = 4'b1110;	// Manufacturer ID: 0x139c
+			6'b001001: autocfg_data = 4'b1100;
+			6'b001010: autocfg_data = 4'b0110;
+			6'b001011: autocfg_data = 4'b0011;
+			6'b010011: autocfg_data = 4'b1101;	// serial=2
 			  default:;
 		endcase
 	end
@@ -554,7 +656,9 @@ end
 
 // MiSTer2MEGA65 (AExp fork), October 2026: + ac_ide
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata); //$E80000 - $E8FFFF
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_ide || ac_toccata); //$E80000 - $E8FFFF
+// Megamiga, October 2026: + ac_z3
+//wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_ide || ac_toccata); //$E80000 - $E8FFFF
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_toccata); //$E80000 - $E8FFFF
 
 reg       z2ram_ena;
 reg [4:0] z3ram_base0;
@@ -576,7 +680,13 @@ always @(posedge clk) begin : autoconfig_blk
 	old_uds <= chip_uds;
 
 	if (~reset | ~reset_out) begin
-		ac_memcard  <= cpucfg[1] ? fastramcfg : fastramcfg[2] ? 3'd3 : {1'b0, fastramcfg[1:0]};
+		// Megamiga, October 2026: Zorro II only here (fastramcfg[1:0]); the
+		// Zorro III board is ac_z3 (z3ena, 68020 only)
+		//ac_memcard  <= cpucfg[1] ? fastramcfg : fastramcfg[2] ? 3'd3 : {1'b0, fastramcfg[1:0]};
+		ac_memcard  <= {1'b0, fastramcfg[1:0]};
+		ac_z3          <= z3ena & cpucfg[1];
+		z3_configured  <= 0;
+		z3_base        <= 8'h00;
 		//ac_toccata  <= 1; // MiSTer2MEGA65 (AExp): Toccata not ported, see above
 		ac_toccata  <= 0;
 		toccata_base <= 8'h00; // MiSTer2MEGA65 (AExp): give the (now never written) reg a defined value
@@ -594,6 +704,19 @@ always @(posedge clk) begin : autoconfig_blk
 			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - config, ZII RAM
 				z2ram_ena <= 1;
 				ac_memcard <= 0;
+			end
+		end
+		// Megamiga, October 2026: the Zorro III board. Kickstart writes the
+		// base address A31..A16 as a word to 0x44; a 16 MB board needs A31..A24.
+		// 0x4C = "shut up" (no room, e.g. Kickstart 1.3): stays unconfigured.
+		else if(ac_z3) begin
+			if (chip_addr[6:1] == 6'b100010) begin // Register 0x44 - base address
+				z3_base       <= cpu_dout[15:8];
+				z3_configured <= 1;
+				ac_z3         <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_z3         <= 0;
 			end
 		end
 		// MiSTer2MEGA65 (AExp fork), October 2026: the IDE board. Kickstart
