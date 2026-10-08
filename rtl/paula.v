@@ -115,6 +115,7 @@ module paula
 	input         phys_wprot_n,
 	input         phys_track0_n,
 	input         phys_ready_n,
+	input   [3:0] vspin_n,        // Megamiga, October 2026: spin-up delay
 	input         phys_index,
 	output  [3:0] motor_on_o,
 	output [15:0] fdd_dsig,
@@ -296,6 +297,7 @@ paula_floppy pf1
 	.phys_wprot_n(phys_wprot_n),
 	.phys_track0_n(phys_track0_n),
 	.phys_ready_n(phys_ready_n),
+	.vspin_n(vspin_n),            // Megamiga, October 2026
 	.phys_index(phys_index),
 	.motor_on_o(motor_on_o),
 	.fdd_dsig(fdd_dsig),

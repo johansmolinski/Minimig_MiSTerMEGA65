@@ -120,6 +120,11 @@ module paula_floppy
 	input         phys_wprot_n,   // conditioned real /WPROT level (active low)
 	input         phys_track0_n,  // conditioned real /TRK0 level (active low)
 	input         phys_ready_n,   // synthesized real /RDY level (active low)
+	// Megamiga, October 2026: spin-up delay for the simulated drives. A set bit
+	// keeps that unit's _RDY inactive although it is selected; main.vhd sets it
+	// for about 500 ms after the unit's motor was switched on (OSM option).
+	// vspin_n = 0000 -> the original always-ready behaviour, bit-identical.
+	input   [3:0] vspin_n,
 	input         phys_index,     // qualified real INDEX level (ms-wide, active high)
 	output  [3:0] motor_on_o,     // per-unit latched motor state (sources the real MOTEA)
 	output [15:0] fdd_dsig,       // diagnostic: XOR of the first 1024 words stored per
@@ -480,7 +485,9 @@ assign dsktrack79 = dsktrack[sel]==82;
 //        & (_sel[1] | ~(drives[1] | drives[0]))
 //        & (_sel[0]);                          // (original)
 wire [3:0] vrdy_n = { ~(drives[1] & drives[0]), ~drives[1], ~(drives[1] | drives[0]), 1'b0 };
-wire [3:0] rdy_src_n = (~phys_mask & vrdy_n) | (phys_mask & {4{phys_ready_n}});
+// Megamiga, October 2026: | vspin_n (spin-up delay of the simulated drives)
+//wire [3:0] rdy_src_n = (~phys_mask & vrdy_n) | (phys_mask & {4{phys_ready_n}});
+wire [3:0] rdy_src_n = (~phys_mask & (vrdy_n | vspin_n)) | (phys_mask & {4{phys_ready_n}});
 assign _ready = &(_sel | rdy_src_n);
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: export the per-unit motor

@@ -84,6 +84,7 @@ module minimig_m65
 	input         fdd_phys_wprot_n,
 	input         fdd_phys_track0_n,
 	input         fdd_phys_ready_n,
+	input   [3:0] fdd_vspin_n,     // Megamiga, October 2026: spin-up delay (paula_floppy.v)
 	input         fdd_phys_index,
 	output [15:0] fdd_dsig,        // diag: store signature per read attempt
 	output  [7:0] fdd_datt,        // diag: read-attempt counter
@@ -215,6 +216,7 @@ minimig minimig_inst
 	.fdd_phys_wprot_n (fdd_phys_wprot_n ),
 	.fdd_phys_track0_n(fdd_phys_track0_n),
 	.fdd_phys_ready_n (fdd_phys_ready_n ),
+	.fdd_vspin_n      (fdd_vspin_n      ),
 	.fdd_phys_index   (fdd_phys_index   ),
 	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: MEGA65 battery RTC wired
 	// through to Minimig's MSM6242B clock at $DC0000 (issue #13).

@@ -225,6 +225,7 @@ module minimig
 	input         fdd_phys_wprot_n,
 	input         fdd_phys_track0_n,
 	input         fdd_phys_ready_n,
+	input   [3:0] fdd_vspin_n,     // Megamiga, October 2026: spin-up delay (paula_floppy.v)
 	input         fdd_phys_index,
 	output [15:0] fdd_dsig,        // diag: store signature per read attempt
 	output  [7:0] fdd_datt,        // diag: read-attempt counter
@@ -545,6 +546,7 @@ paula PAULA1
 	.phys_wprot_n(fdd_phys_wprot_n),
 	.phys_track0_n(fdd_phys_track0_n),
 	.phys_ready_n(fdd_phys_ready_n),
+	.vspin_n(fdd_vspin_n),         // Megamiga, October 2026
 	.phys_index(fdd_phys_index),
 	.motor_on_o(fdd_motor_on),
 	.fdd_dsig(fdd_dsig),
