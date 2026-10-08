@@ -38,6 +38,7 @@ module minimig_m65
 	// SRAM-style memory interface (served by BRAM in mega65.vhd)
 	output [15:0] ram_data,       // write data
 	input  [15:0] ramdata_in,     // read data
+	input  [47:0] chip48,         // Megamiga, October 2026: AGA wide chip RAM read (sdram_ctrl)
 	output [22:1] ram_address,    // BANKED word address (see minimig_sram_bridge.v;
 	                              // minimig's bit 23 is constant 0 after the AExp
 	                              // sweep change and is dropped here)
@@ -160,7 +161,9 @@ minimig minimig_inst
 	._ram_ble      (ram_ble_n    ),
 	._ram_we       (ram_we_n     ),
 	._ram_oe       (ram_oe_n     ),
-	.chip48        (48'h0        ), // AGA 64-bit fetch: OCS keeps fmode=0, logic prunes
+	// Megamiga, October 2026: connected for AGA (sdram_ctrl chip48, as on MiSTer)
+	//.chip48        (48'h0        ), // AGA 64-bit fetch: OCS keeps fmode=0, logic prunes
+	.chip48        (chip48       ),
 
 	//system pins
 	.rst_ext       (rst_ext      ),
