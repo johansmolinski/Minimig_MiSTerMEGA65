@@ -71,8 +71,27 @@ module sdram_ctrl
 	input             cpuU,
 	input      [15:0] cpuWR,
 	output     [15:0] cpuRD,
-	output            ramready
+	output            ramready,
+	// MiSTer2MEGA65 (Megamiga), October 2026: a third port for the core's floppy and IDE
+	// boot ROM buffers (formerly in HyperRAM). It addresses the UPPER HALF of every row of
+	// bank 0 (column bit 9 = 1), which the Amiga ports never use - their 24-bit address
+	// only reaches columns 0..511 - so the area is disjoint from Chip/Slow/Kick RAM by
+	// construction. One word per request: flpReq toggles to request, flpAck toggles back
+	// when the access is done (read data in flpRD). Priority: chipset first, then this
+	// port - but never twice in a row while the CPU waits, and never while a refresh is
+	// due - then the CPU, then refresh.
+	input             flpReq,
+	input      [22:1] flpAddr,
+	input             flpWE,
+	input             flpL,
+	input             flpU,
+	input      [15:0] flpWR,
+	output reg [15:0] flpRD,
+	output reg        flpAck
 );
+
+initial flpAck = 1'b0;   // Megamiga: no initialiser on an output port in SystemVerilog mode
+
 
 reg [15:0] sd_data_out;
 reg        sd_data_oe = 0;
@@ -86,7 +105,8 @@ localparam [2:0]
 	IDLE = 0,
 	CHIP = 1,
 	CPU_READCACHE = 2,
-	CPU_WRITECACHE = 3;
+	CPU_WRITECACHE = 3,
+	FLOPPY = 4;           // Megamiga: the floppy/IDE ROM port
 
 // MiSTer2MEGA65 (Megamiga), October 2026: these registers were declared below
 // their first use (in the cpu_cache_new port map and in early always blocks).
@@ -218,6 +238,11 @@ always @ (posedge sysclk) begin
 	reg [15:0] sdata_chip;
 
 	sdata_chip <= sdata_reg;
+	// Megamiga: the floppy port takes the first word of the burst, like chipRD
+	if(slot_type == FLOPPY && sdram_state == 9) begin
+		flpRD  <= sdata_chip;
+		flpAck <= ~flpAck;
+	end
 	if(slot_type == CHIP) begin
 		case(sdram_state)
 			 9: chipRD   <= sdata_chip;
@@ -276,6 +301,7 @@ always @ (posedge sysclk) begin
 	reg [15:0] datawr;
 	reg  [9:0] casaddr;
 	reg  [3:0] rcnt;
+	reg        flp_last;     // Megamiga: the previous slot went to the floppy port
 	
 	sd_clk <= sdram_state[0];
 
@@ -330,6 +356,8 @@ always @ (posedge sysclk) begin
 				slot_type       <= IDLE;
 
 				if(~&rcnt) rcnt <= rcnt + 1'd1;
+				flp_last        <= 0;
+				casaddr[9]      <= 0;    // Megamiga: Amiga ports use columns 0..511
 
 				// we give the chipset first priority
 				// (this includes anything on the "motherboard" - chip RAM, slow RAM and Kickstart, turbo modes notwithstanding)
@@ -342,6 +370,18 @@ always @ (posedge sysclk) begin
 					cas_sd_we    <= chipRW;
 					datawr       <= chipWR;
 					chipWE       <= !chipRW;
+				end
+				// Megamiga: floppy/IDE ROM port (see the port list)
+				else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req))) begin
+					slot_type    <= FLOPPY;
+					flp_last     <= 1;
+					{sd_ba,sd_addr,casaddr[8:0]} <= {2'b00, flpAddr};
+					casaddr[9]   <= 1;
+					sd_ras       <= 0;
+					cas_dqm      <= {flpU,flpL};
+					cas_sd_cas   <= 0;
+					cas_sd_we    <= ~flpWE;
+					datawr       <= flpWR;
 				end
 				else if(write_req) begin
 					slot_type    <= CPU_WRITECACHE;
