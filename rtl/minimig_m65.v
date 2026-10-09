@@ -9,7 +9,7 @@
 // 1. renames all underscore-prefixed ports to the M2M convention
 //    (active-low signals get a _n suffix instead of the _ prefix),
 // 2. ties off every subsystem that the Amiga 500 configuration never uses
-//    (Toccata, IDE/Gayle externals, RS232 modem lines, RTC, joystick ports
+//    (Toccata, IDE/Gayle externals, RS232 DTR/DSR/CD/RI, RTC, joystick ports
 //    3/4, analog joysticks, AGA chip48 bus), so that CORE/vhdl/main.vhd
 //    stays free of clutter and the unused logic constant-folds in synthesis.
 //
@@ -73,6 +73,14 @@ module minimig_m65
 	output        pwr_led,
 	output        fdd_led,
 	output        hdd_led,
+
+	// Megamiga, October 2026: RS-232 serial port on the MEGA65 PMOD1 header
+	// (CORE/vhdl/mega65.vhd drives the pins and synchronizes the inputs).
+	// TTL levels at the Amiga pins: idle '1', /CTS and /RTS active low.
+	input         rxd,            // Paula UART receive
+	output        txd,            // Paula UART transmit
+	input         cts_n,          // CIA-B PA4 /CTS
+	output        rts_n,          // CIA-B PA6 /RTS
 
 	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
 	// the MEGA65's real internal floppy as an Amiga drive unit (main.vhd /
@@ -177,10 +185,16 @@ minimig minimig_inst
 	.eclk          (eclk         ),
 
 	//rs232 pins (no serial port wired in milestone 1; inactive levels as MiSTer)
-	.rxd           (1'b1         ),
-	.txd           (             ),
-	.cts           (1'b1         ),
-	.rts           (             ),
+	// Megamiga, October 2026: RXD/TXD and /CTS//RTS wired to the PMOD1 serial port;
+	// DTR/DSR/CD/RI have no pin and keep the inactive ties. Original:
+	// .rxd           (1'b1         ),
+	// .txd           (             ),
+	// .cts           (1'b1         ),
+	// .rts           (             ),
+	.rxd           (rxd          ),
+	.txd           (txd          ),
+	.cts           (cts_n        ),
+	.rts           (rts_n        ),
 	.dtr           (             ),
 	.dsr           (1'b1         ),
 	.cd            (1'b1         ),
