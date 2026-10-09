@@ -150,7 +150,10 @@ module cpu_wrapper
 //assign ramsel       = 1'b0;
 // Megamiga, October 2026: without sel_rtg (no RTG framebuffer in this core)
 //assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
-assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram);
+//assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram);
+// Megamiga, October 2026: sel_rtg back - the RTG board memory at $02000000 (68020 only,
+// a 32-bit address), served by the parent from the MEGA65's HyperRAM (ramaddr[26] below)
+assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
 assign ramshared    = 1'b0;
 
 // MiSTer2MEGA65 (AExp fork), October 2026: the IDE board occupies 128 KB at
@@ -232,7 +235,8 @@ assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 // Megamiga, October 2026: the mapping the parent (main.vhd) expects:
 // ramaddr[28:27] = 2'b11 Zorro II (8 MB, [22:1]), 2'b10 Zorro III (16 MB,
 // [23:1]), 2'b00 everything else (turbo Chip/Kickstart, banked like
-// minimig_sram_bridge.v). sel_dd never reaches the ram* port (see ramsel).
+// minimig_sram_bridge.v), with ramaddr[26] = 1 for the RTG board memory.
+// sel_dd never reaches the ram* port (see ramsel).
 //assign ramaddr[28]    = sel_zram & ~sel_z3ram0;
 //assign ramaddr[27]    = sel_zram & (~sel_z3ram1 | cpu_addr[27]);
 //assign ramaddr[26:23] = (sel_z3ram0 | sel_z3ram1) ? cpu_addr[26:23]: (sel_rtg ? 4'b1110 : {4{sel_dd}});
@@ -242,7 +246,10 @@ assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 //assign ramaddr[15:1]  = cpu_addr[15:1];
 assign ramaddr[28]    = sel_z2ram | sel_z3ram16;
 assign ramaddr[27]    = sel_z2ram;
-assign ramaddr[26:24] = 3'b000;
+// Megamiga, October 2026: ramaddr[26] = 1: the RTG board memory ($02xxxxxx, [22:1] the offset)
+//assign ramaddr[26:24] = 3'b000;
+assign ramaddr[26]    = sel_rtg;
+assign ramaddr[25:24] = 2'b00;
 assign ramaddr[23]    = sel_z3ram16 & cpu_addr[23];
 assign ramaddr[22:19] = cpu_addr[22:19];
 assign ramaddr[18]    = (sel_kicklower & bootrom) | cpu_addr[18];
