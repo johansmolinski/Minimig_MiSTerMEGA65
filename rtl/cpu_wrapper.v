@@ -120,6 +120,9 @@ module cpu_wrapper
 	input             ide_ena,         // board present in the autoconfig chain
 	// Megamiga, October 2026: the 16 MB Zorro III board (68020 only)
 	input             z3ena,
+	// Megamiga, October 2026: the network card (eth_card.vhd), also on ext_*
+	input             eth_ena,         // board present in the autoconfig chain
+	output            ext_eth,         // the ext_sel cycle is for the network card
 	output            ext_sel,         // bus cycle to the configured board
 	input      [15:0] ext_dout,        // read data of the board
 	input             ext_ready,       // DTACK of the board
@@ -164,7 +167,14 @@ wire sel_ide        = ide_configured && !cpu_addr[31:24] && (cpu_addr[23:17] == 
 // select goes away, and TG68K, unlike the 68000, has no AS gap between two
 // consecutive accesses (lide.device reads the data register with MOVEM).
 //assign ext_sel      = cpu_req & ~sel_nmi_vector & sel_ide;
-assign ext_sel      = cpu_req & ~sel_nmi_vector & sel_ide & ~ext_done;
+// Megamiga, October 2026: + sel_eth, the network card (64 KB at its autoconfig base)
+//assign ext_sel      = cpu_req & ~sel_nmi_vector & sel_ide & ~ext_done;
+reg       ac_eth;          // Megamiga: the network card is being configured
+reg       eth_configured;  // Megamiga: the network card has its base address
+reg [7:0] eth_base;        // Megamiga: A23..A16 of the network card
+wire sel_eth        = eth_configured && !cpu_addr[31:24] && (cpu_addr[23:16] == eth_base);
+assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_eth) & ~ext_done;
+assign ext_eth      = sel_eth;
 reg ext_done;
 always @(posedge clk) ext_done <= (cpucfg[1:0] != 2'b00) & ext_sel & ext_ready;
 
@@ -488,7 +498,9 @@ reg [2:0] cpu_ipl;
 always @(posedge clk) begin
 	// Megamiga, October 2026: + ~ext_sel (IDE board cycles do not touch the chip bus)
 	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack;
-	chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~(sel_ide & ext_done);
+	// Megamiga, October 2026: + the network card
+	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~(sel_ide & ext_done);
+	chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth) & ext_done);
 	cpu_ipl <= ipl_i;
 end
 
@@ -628,6 +640,22 @@ always @(*) begin
 			default: ;                     // 4'b1111 = inverted 0
 		endcase
 	end
+	// Megamiga, October 2026: the network card (eth_card.vhd): Zorro II I/O
+	// board, 64 KB, no ROM, product 101, manufacturer 2011 ($07DB, the
+	// experimental-board ID). Registers 0x00/0x02 are not inverted.
+	else if(ac_eth) begin
+		case (chip_addr[6:1])
+			6'h00: autocfg_data = 4'b1100; // Zorro II, not memory, no ROM
+			6'h01: autocfg_data = 4'b0001; // 64 KB
+			6'h02: autocfg_data = ~4'h6;   // product 101 = 0x65
+			6'h03: autocfg_data = ~4'h5;
+			6'h08: autocfg_data = ~4'h0;   // manufacturer 0x07DB = 2011
+			6'h09: autocfg_data = ~4'h7;
+			6'h0A: autocfg_data = ~4'hD;
+			6'h0B: autocfg_data = ~4'hB;
+			default: ;                     // 4'b1111 = inverted 0
+		endcase
+	end
 	// Zorro II other cards
 	else if(ac_toccata) begin
 		case (chip_addr[6:1])
@@ -665,7 +693,9 @@ end
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_toccata); //$E80000 - $E8FFFF
 // Megamiga, October 2026: + ac_z3
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_ide || ac_toccata); //$E80000 - $E8FFFF
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_toccata); //$E80000 - $E8FFFF
+// Megamiga, October 2026: + ac_eth
+//wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_toccata); //$E80000 - $E8FFFF
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
 
 reg       z2ram_ena;
 reg [4:0] z3ram_base0;
@@ -700,6 +730,9 @@ always @(posedge clk) begin : autoconfig_blk
 		ac_ide         <= ide_ena;
 		ide_configured <= 0;
 		ide_base       <= 8'h00;
+		ac_eth         <= eth_ena;
+		eth_configured <= 0;
+		eth_base       <= 8'h00;
 		z2ram_ena   <= 0;
 		z3ram_ena0  <= 0;
 		z3ram_ena1  <= 0;
@@ -739,6 +772,17 @@ always @(posedge clk) begin : autoconfig_blk
 			end
 			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
 				ac_ide         <= 0;
+			end
+		end
+		// Megamiga, October 2026: the network card, configured like the IDE board
+		else if(ac_eth) begin
+			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - config
+				eth_base       <= cpu_dout[15:8];
+				eth_configured <= 1;
+				ac_eth         <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_eth         <= 0;
 			end
 		end
 		else if(ac_toccata) begin

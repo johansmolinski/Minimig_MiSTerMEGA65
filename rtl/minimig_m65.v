@@ -82,6 +82,9 @@ module minimig_m65
 	input         cts_n,          // CIA-B PA4 /CTS
 	output        rts_n,          // CIA-B PA6 /RTS
 
+	// Megamiga, October 2026: the network card's interrupt (INT2, level)
+	input         eth_irq,
+
 	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
 	// the MEGA65's real internal floppy as an Amiga drive unit (main.vhd /
 	// mega65.vhd drive the connector and condition the status levels; see the
@@ -293,6 +296,7 @@ minimig minimig_inst
 	// IDE/Gayle: disabled (cmd 0xF8 = 0)
 	.ide_fast      (             ),
 	.ide_ext_irq   (1'b0         ),
+	.eth_irq       (eth_irq      ),
 	.ide_req       (             ),
 	.ide_address   (5'b0         ),
 	.ide_write     (1'b0         ),
