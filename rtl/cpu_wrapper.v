@@ -71,10 +71,22 @@
 //  * Original code is kept as comments; all changes carry a               //
 //    "MiSTer2MEGA65" provenance comment.                                  //
 //                                                                          //
+// October 2026 (Megamiga, branch cpu040, EXPERIMENTAL): CPU040 = 1 puts   //
+// the AP68040 pipelined core (rtl/ap040, MC68040 with MMU, FPU and caches, //
+// github.com/ranzbak/AP68040-pipelined 8ead239, GPLv3) where TG68K was.    //
+// It is selected like TG68K (cpucfg = 11) and keeps TG68K's 16-bit bus      //
+// (the core's own ap040_bus16_adapter), so everything downstream is the    //
+// 68020 path. Two additions: the MMU's table walker borrows that bus       //
+// (walker bridge below), and chipset writes to Chip RAM are snooped into   //
+// the data cache (snoop_stb/snoop_addr), which caches Chip RAM.            //
+//                                                                          //
 //--------------------------------------------------------------------------//
 //--------------------------------------------------------------------------//
 
 module cpu_wrapper
+#(
+	parameter CPU040 = 0
+)
 (
 	input             reset,
 	output reg        reset_out,
@@ -132,7 +144,11 @@ module cpu_wrapper
 
 	output reg  [1:0] cpustate,
 	output reg  [3:0] cacr,
-	output reg [31:0] nmi_addr
+	output reg [31:0] nmi_addr,
+
+	// Megamiga, October 2026 (CPU040): a chipset write to Chip RAM, this clock
+	input             snoop_stb,
+	input      [20:1] snoop_addr
 );
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the SDRAM/DDR3 cpu port is
@@ -280,6 +296,16 @@ reg         lds_in;
 reg  [15:0] chip_data;
 reg  [31:0] vbr;
 
+// Megamiga, October 2026: declared here, before the CPU generate block below
+// (CPU040), which uses them: a forward reference from inside a generate block
+// would declare a new, undriven net in the block's own scope.
+wire       cpu_req = (cpustate != 1);
+reg  [2:0] cpu_ipl;
+reg        chipready;
+reg        z2ram_ena;
+reg        z3_configured;   // Megamiga: the Zorro III board has its base address
+reg  [7:0] z3_base;         // Megamiga: A31..A24 of the Zorro III board
+
 always @* begin
 	if(cpucfg[1:0]) begin
 		cpu_dout     = cpu_dout_p;
@@ -354,6 +380,8 @@ wire        lds_p;
 wire        reset_out_p;
 wire        longword;
 
+// Megamiga, October 2026: TG68K, or the AP68040 core (CPU040, see below)
+generate if (CPU040 == 0) begin : g_tg68k
 TG68KdotC_Kernel
 #(
 	.sr_read(2),        // 0=>user,   1=>privileged,    2=>switchable with CPU(0)
@@ -386,6 +414,176 @@ cpu_inst_p
 	.cacr_out(cacr_p),
 	.vbr_out(vbr_p)
 );
+end
+else begin : g_ap040
+// The AP68040 pipelined core with TG68K's bus (AP040_BUS16 = 1: its
+// ap040_bus16_adapter splits every transfer into TG68K-style 16-bit cycles
+// with an idle cycle between them, completed by the same clock enable). The
+// MMU's table walker has its own 32-bit port; the walker bridge below runs it
+// as two 16-bit cycles on the same bus while the adapter is idle, and freezes
+// the core (clock enable low) for the length of those cycles, so the adapter
+// can neither start nor complete anything under them. First bring-up
+// configuration: synchronous stores (no posted stores, no store buffer), none
+// of the optional speed-ups, the fill channel off.
+wire [15:0] a_dout;
+wire [31:0] a_addr, a_cacr;
+wire  [1:0] a_state;
+wire        a_wr, a_uds, a_lds, a_lw;
+wire        a_maint;
+wire        wk_req, wk_we;
+wire [31:0] wk_addr, wk_wdat;
+reg         wk_ack, wk_berr;
+reg  [31:0] wk_data;
+
+// walker bridge: IDLE -> HI (bits 31:16) -> GAP (bus idle) -> LO (15:0) -> DONE
+// (ack held until the MMU drops its request, which it does for at least one
+// clock between two descriptor transactions)
+localparam WK_IDLE = 3'd0, WK_HI = 3'd1, WK_GAP = 3'd2, WK_LO = 3'd3, WK_DONE = 3'd4;
+reg  [2:0] wk_st;
+wire wk_start = (wk_st == WK_IDLE) && wk_req && (a_state == 2'b01);
+wire wk_bus   = (wk_st == WK_HI) || (wk_st == WK_LO);
+wire wk_hold  = wk_start || wk_bus || (wk_st == WK_GAP);
+// the same completion TG68K's clock enable uses
+wire bus_done = chipready | ramready | fastchip_ready | ext_ready;
+
+always @(posedge clk) begin
+	if (!reset) begin
+		wk_st   <= WK_IDLE;
+		wk_ack  <= 0;
+		wk_berr <= 0;
+	end
+	else case (wk_st)
+		WK_IDLE: if (wk_start) begin
+				if (wk_addr[1:0] != 2'b00) begin   // a descriptor is longword-aligned
+					wk_berr <= 1;
+					wk_st   <= WK_DONE;
+				end
+				else wk_st <= WK_HI;
+			end
+		WK_HI:   if (bus_done) begin wk_data[31:16] <= cpu_din; wk_st <= WK_GAP; end
+		WK_GAP:  wk_st <= WK_LO;
+		WK_LO:   if (bus_done) begin wk_data[15:0] <= cpu_din; wk_ack <= 1; wk_st <= WK_DONE; end
+		WK_DONE: if (!wk_req) begin wk_ack <= 0; wk_berr <= 0; wk_st <= WK_IDLE; end
+		default: wk_st <= WK_IDLE;
+	endcase
+end
+
+assign cpu_addr_p = wk_bus ? {wk_addr[31:2], wk_st == WK_LO, 1'b0} : a_addr;
+assign cpu_dout_p = wk_bus ? ((wk_st == WK_LO) ? wk_wdat[15:0] : wk_wdat[31:16]) : a_dout;
+assign cpustate_p = wk_bus ? (wk_we ? 2'b11 : 2'b10) : (wk_st == WK_GAP) ? 2'b01 : a_state;
+assign wr_p       = wk_bus ? ~wk_we : a_wr;
+assign uds_p      = wk_bus ? 1'b0 : a_uds;
+assign lds_p      = wk_bus ? 1'b0 : a_lds;
+assign longword   = wk_bus ? 1'b0 : a_lw;
+// 040 CACR: bit 15 = instruction cache. Minimig's cpu_cache_new takes bit 0 =
+// enable and clears on a rising bit 3: CINV/CPUSH clear it as well.
+assign cacr_p     = {a_maint, 2'b00, a_cacr[15]};
+
+// physical-bus watchdog (2^20 clocks = 37 ms: Chip RAM may wait long for a slot,
+// but every target on this bus answers, so it only fires on a real fault)
+wire bus_berr;
+ap040_bus_timeout #(.COUNTER_BITS(20)) bus_timeout (
+	.clk(clk),
+	.nreset(reset & reset_out_p),
+	.req(cpu_req & ~wk_hold),
+	.complete(bus_done),
+	.berr(bus_berr)
+);
+
+// chipset writes to Chip RAM, registered once, into the data cache's snoop port
+reg        snp_stb;
+reg [20:1] snp_addr;
+always @(posedge clk) begin
+	snp_stb  <= snoop_stb;
+	snp_addr <= snoop_addr;
+end
+
+ap040_pipe_tg68k_compat #(
+	.AP040_HAS_MMU(1),
+	.AP040_HAS_FPU(1),
+	.AP040_ENABLE_CACHE(1),
+	.AP040_POST_STORES(0),
+	.AP040_FILL_CHANNEL(0),
+	.AP040_BUS16(1),
+	.AP040_IFP(1)
+) cpu_inst_p (
+	.clk(clk),
+	.nreset(reset),
+	.clkena_in(~wk_hold & (~cpu_req | bus_done | bus_berr)),
+	.cache_allow_all(1'b0),
+	.cache_snoop_stb(snp_stb),
+	.cache_snoop_addr({11'd0, snp_addr, 1'b0}),
+	.cache_z2_ena(z2ram_ena),
+	// the 16 MB Zorro III board: its 128 MB-aligned window (nothing else is there)
+	.cache_z3_base0(z3_base[7:3]),
+	.cache_z3_ena0(z3_configured),
+	.cache_z3_base1(4'd0),
+	.cache_z3_ena1(1'b0),
+	.data_in(cpu_din),
+	.ipl(cpu_ipl),
+	.ipl_autovector(1'b1),
+	.berr(bus_berr),
+
+	.addr_out(a_addr),
+	.data_write(a_dout),
+	.nwr(a_wr),
+	.nuds(a_uds),
+	.nlds(a_lds),
+	.busstate(a_state),
+	.longword(a_lw),
+	.nresetout(reset_out_p),
+	.fc(),
+	.nmi_ack_toggle(),
+	.fill_ena_zorro(1'b0),
+	.fill_ena_chip(1'b0),
+	.fill_req(),
+	.fill_addr(),
+	.fill_data(128'd0),
+	.fill_ack(1'b0),
+	.fill_err(1'b0),
+	.cache_maint_req(a_maint),
+	.cache_maint_ic(),
+	.cache_maint_dc(),
+
+	.mmu_addr_log(),
+	.mmu_addr_phys(),
+	.mmu_cache_inhibit(),
+
+	.walker_req(wk_req),
+	.walker_we(wk_we),
+	.walker_addr(wk_addr),
+	.walker_wdat(wk_wdat),
+	.walker_ack(wk_ack),
+	.walker_data(wk_data),
+	.walker_berr(wk_berr),
+
+	.cache_req(),
+	.cache_addr(),
+	.cache_data(16'd0),
+	.cache_ack(1'b0),
+	.cache_burst(),
+	.cache_burst_len(),
+	.cache_ramaddr(),
+
+	.cacr_out(a_cacr),
+	.vbr_out(vbr_p),
+	.debug_busy(),
+	.debug_fault(),
+	.debug_halted(),
+	.debug_status(),
+	.debug_status2(),
+
+	.m_req(),
+	.m_write(),
+	.m_instr(),
+	.m_size(),
+	.m_addr(),
+	.m_wdata(),
+	.m_fc(),
+	.m_ack(1'b0),
+	.m_rdata(32'd0)
+);
+end endgenerate
 
 //TG68KdotC_Kernel
 //#(
@@ -469,7 +667,8 @@ fx68k cpu_inst_o
 	.eab(cpu_addr_o)
 );
 
-wire cpu_req = (cpustate != 1);
+// Megamiga, October 2026: declared above the CPU generate block (CPU040)
+//wire cpu_req = (cpustate != 1);
 
 wire cchip = turbochip_d & (!cpustate | dcache_d);
 wire ckick = turbokick_d & (!cpustate | dcache_d);
@@ -494,7 +693,7 @@ always @(posedge clk) begin
 end
 
 reg       chipreq;
-reg [2:0] cpu_ipl;
+//reg [2:0] cpu_ipl;     // Megamiga: declared above the CPU generate block
 always @(posedge clk) begin
 	// Megamiga, October 2026: + ~ext_sel (IDE board cycles do not touch the chip bus)
 	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack;
@@ -510,7 +709,7 @@ always @(posedge clk) begin
 	ph2n <= ph2;
 end
 
-reg        chipready;
+//reg        chipready;  // Megamiga: declared above the CPU generate block
 reg [15:0] chipdout_i;
 reg  [2:0] ipl_i;
 reg        c_as,c_rw,c_uds,c_lds;
@@ -577,8 +776,8 @@ reg       ac_toccata;
 reg [2:0] ac_memcard;
 reg       ac_ide;          // AExp: the IDE board is the board being configured
 reg       ac_z3;           // Megamiga: the 16 MB Zorro III board is being configured
-reg       z3_configured;   // Megamiga: the Zorro III board has its base address
-reg [7:0] z3_base;         // Megamiga: A31..A24 of the Zorro III board
+//reg       z3_configured;   // Megamiga: declared above the CPU generate block
+//reg [7:0] z3_base;         // Megamiga: declared above the CPU generate block
 reg       ide_configured;  // AExp: the IDE board has its base address
 reg [7:0] ide_base;        // AExp: A23..A16 of the IDE board
 reg [3:0] autocfg_data;
@@ -697,7 +896,7 @@ end
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_toccata); //$E80000 - $E8FFFF
 wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
 
-reg       z2ram_ena;
+//reg       z2ram_ena;  // Megamiga: declared above the CPU generate block
 reg [4:0] z3ram_base0;
 reg [3:0] z3ram_base1;
 reg       z3ram_ena0;
