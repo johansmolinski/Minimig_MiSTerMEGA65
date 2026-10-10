@@ -92,7 +92,11 @@ module ap040_pipe_tg68k_compat
 	input         cache_snoop_stb,
 	input  [31:0] cache_snoop_addr,
 	input         cache_z2_ena,
-	input   [4:0] cache_z3_base0,
+	// Megamiga, October 2026: A31..A24 of a 16 MB Zorro III board (was
+	// A31..A27, a 128 MB window: the RTG board next to the RAM board fell into
+	// it and was cached with the MMU off). Every compare below is [31:24].
+	//input   [4:0] cache_z3_base0,
+	input   [7:0] cache_z3_base0,
 	input         cache_z3_ena0,
 	input   [3:0] cache_z3_base1,
 	input         cache_z3_ena1,
@@ -325,7 +329,7 @@ wire        c_dbg_halted;
 // memory except the bench's registers at $xxxxF100-$xxxxF1FF.  The windows
 // are registered copies (autoconfig state, set once at boot).
 wire [31:0] stw_addr;
-reg  [4:0]  sw_z3b0;
+reg  [7:0]  sw_z3b0;   // Megamiga: [7:0], see cache_z3_base0
 reg  [3:0]  sw_z3b1;
 reg         sw_z3e0, sw_z3e1, sw_z2e;
 always @(posedge clk) begin
@@ -342,11 +346,11 @@ end
 // is open (findings/storebuf/results.md).
 wire mem_postok = mm_postok &&
                (cache_allow_all ? (mm_addr[15:8] != 8'hF1) :
-                (((mm_addr[31:27] == sw_z3b0) && sw_z3e0) ||
+                (((mm_addr[31:24] == sw_z3b0) && sw_z3e0) ||
                  ((mm_addr[31:28] == sw_z3b1) && sw_z3e1) ||
                  (!mm_addr[31:24] && (mm_addr[23] ^ |mm_addr[22:21]) && sw_z2e)));
 wire stw_ram = cache_allow_all ? (stw_addr[15:8] != 8'hF1) :
-               (((stw_addr[31:27] == sw_z3b0) && sw_z3e0) ||
+               (((stw_addr[31:24] == sw_z3b0) && sw_z3e0) ||
                 ((stw_addr[31:28] == sw_z3b1) && sw_z3e1) ||
                 (!stw_addr[31:24] && (stw_addr[23] ^ |stw_addr[22:21]) && sw_z2e) ||
                 (stw_addr[31:21] == 11'd0));
@@ -643,7 +647,7 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	// and would otherwise lose all I-cache coverage.
 	wire cache_chip = (mm_addr[31:21] == 11'd0);          // $000000-$1fffff
 	wire cache_win =
-		((mm_addr[31:27] == cache_z3_base0) && cache_z3_ena0) ||
+		((mm_addr[31:24] == cache_z3_base0) && cache_z3_ena0) ||
 		((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1) ||
 		(!mm_addr[31:24] && (mm_addr[23] ^ |mm_addr[22:21]) && cache_z2_ena) ||
 		cache_chip;
@@ -675,7 +679,7 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	// autoconfig state (the chipset clock's domain, set once at boot), and
 	// straight into the data path's hit decision they made a dll_28 ->
 	// clk_38 path of 20 logic levels ending at the BCU's request registers.
-	reg  [4:0] w_z3b0;
+	reg  [7:0] w_z3b0;   // Megamiga: [7:0], see cache_z3_base0
 	reg  [3:0] w_z3b1;
 	reg        w_z3e0, w_z3e1, w_z2e;
 	always @(posedge clk) begin
@@ -689,7 +693,7 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 		else if (ce_core) ifp_ie_q <= ifp_req && cacr_out[15];
 	wire ia_chip  = (ifp_pa[31:21] == 11'd0);
 	wire ia_win   =
-		((ifp_pa[31:27] == w_z3b0) && w_z3e0) ||
+		((ifp_pa[31:24] == w_z3b0) && w_z3e0) ||
 		((ifp_pa[31:28] == w_z3b1) && w_z3e1) ||
 		(!ifp_pa[31:24] && (ifp_pa[23] ^ |ifp_pa[22:21]) && w_z2e);
 	wire ia_ok    = ifp_ie_q && ifp_tok && !ifp_tci &&
@@ -733,7 +737,7 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 				 (dfp_size == `AP040_SZ_L && dfp_addr[11:0] < 12'hFFD));
 		end
 	wire da_win =
-		((dfp_pa[31:27] == w_z3b0) && w_z3e0) ||
+		((dfp_pa[31:24] == w_z3b0) && w_z3e0) ||
 		((dfp_pa[31:28] == w_z3b1) && w_z3e1) ||
 		(!dfp_pa[31:24] && (dfp_pa[23] ^ |dfp_pa[22:21]) && w_z2e) ||
 		(dfp_pa[31:21] == 11'd0);

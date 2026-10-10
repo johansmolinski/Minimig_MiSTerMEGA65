@@ -211,7 +211,11 @@ wire sel_z3ram16 = (cpu_addr[31:24] == z3_base) && z3_configured;
 //wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram;
 wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram | sel_z3ram16;
 wire sel_dd     = (cpu_addr[31:16] == 16'h00DD) && (cpu_addr[15:13] == 'b010);
-wire sel_rtg    = (cpu_addr[31:24] == 8'h02);
+//wire sel_rtg    = (cpu_addr[31:24] == 8'h02);
+// Megamiga, October 2026: + the memory half of the RTG autoconfig board
+wire sel_rtgb   = rtgb_configured && (cpu_addr[31:23] == rtgb_base);
+wire sel_rtgreg = sel_rtgb & cpu_addr[22];        // its register half
+wire sel_rtg    = (cpu_addr[31:24] == 8'h02) | (sel_rtgb & ~cpu_addr[22]);
 
 // don't sel_kickram when writing
 wire sel_kickram   = !cpu_addr[31:24] && (&cpu_addr[23:19] || (cpu_addr[23:19] == 5'b11100)) && ckick && wr;	// $f8xxxx, e0xxxx
@@ -311,6 +315,17 @@ reg        chipready;
 reg        z2ram_ena;
 reg        z3_configured;   // Megamiga: the Zorro III board has its base address
 reg  [7:0] z3_base;         // Megamiga: A31..A24 of the Zorro III board
+// Megamiga, October 2026 (cpu040 branch): the RTG card as an autoconfig Zorro III
+// board (8 MB, I/O type, manufacturer 2011, product 102), so that an MMU setup
+// maps it like every other board (Commodore's 68040.library maps the memory
+// list and the configured boards and nothing else: with the card only at
+// MiSTer's fixed addresses, Picasso96 took an access fault on a 68040).
+// Board offset $000000-$3FFFFF = the board memory (as $02000000), $400000 and
+// up = the register page of $B80000 ($B80100 registers, $B80400 palette,
+// $B80800 blitter), repeated every 4 KB. The fixed addresses stay as well.
+reg        ac_rtgb;         // the RTG board is being configured
+reg        rtgb_configured; // the RTG board has its base address
+reg  [8:0] rtgb_base;       // A31..A23 of the RTG board
 
 always @* begin
 	if(cpucfg[1:0]) begin
@@ -327,10 +342,13 @@ always @* begin
 		chip_rw      = c_rw;
 		chip_uds     = c_uds;
 		chip_lds     = c_lds;
-		chip_addr    = cpu_addr_p[23:1];
+		// Megamiga: the RTG board's register half reaches the fastchip port as $B80xxx
+		//chip_addr    = cpu_addr_p[23:1];
+		chip_addr    = sel_rtgreg ? {12'hB80, cpu_addr_p[11:1]} : cpu_addr_p[23:1];
 		chip_din     = cpu_dout_p;
 		chip_data    = chipdout_i;
-		fastchip_sel = cpu_req & !cpu_addr_p[31:24];
+		//fastchip_sel = cpu_req & !cpu_addr_p[31:24];
+		fastchip_sel = cpu_req & (!cpu_addr_p[31:24] | sel_rtgreg);
 		fastchip_lw  = longword;
 	end
 	else begin
@@ -540,7 +558,7 @@ ap040_pipe_tg68k_compat #(
 	.cache_snoop_addr({11'd0, snp_addr, 1'b0}),
 	.cache_z2_ena(z2ram_ena),
 	// the 16 MB Zorro III board: its 128 MB-aligned window (nothing else is there)
-	.cache_z3_base0(z3_base[7:3]),
+	.cache_z3_base0(z3_base),   // exactly the 16 MB board (rtl/ap040 compat, Megamiga)
 	.cache_z3_ena0(z3_configured),
 	.cache_z3_base1(4'd0),
 	.cache_z3_ena1(1'b0),
@@ -850,6 +868,23 @@ always @(*) begin
 	// (github.com/LIV2/RIPPLE-IDE RTL/autoconfig.v): Zorro II I/O board with
 	// a DiagArea ROM at offset 0x0008, 128 KB, product 7, manufacturer 5194.
 	// Registers 0x00/0x02 are not inverted, all others are.
+	// Megamiga, October 2026: the RTG board (68020/68040): Zorro III I/O board, 8 MB,
+	// no ROM, product 102, manufacturer 2011; flags: not silenceable, Zorro III.
+	// Registers 0x00/0x02 are not inverted, all others are.
+	else if(ac_rtgb) begin
+		case (chip_addr[6:1])
+			6'h00: autocfg_data = 4'b1000; // Zorro III, not memory, no ROM
+			6'h01: autocfg_data = 4'b0000; // 8 MB (size code 000, not extended)
+			6'h02: autocfg_data = ~4'h6;   // product 102 = 0x66
+			6'h03: autocfg_data = ~4'h6;
+			6'h04: autocfg_data = ~4'b0101; // er_Flags: NOSHUTUP, ZORRO_III
+			6'h08: autocfg_data = ~4'h0;   // manufacturer 0x07DB = 2011
+			6'h09: autocfg_data = ~4'h7;
+			6'h0A: autocfg_data = ~4'hD;
+			6'h0B: autocfg_data = ~4'hB;
+			default: ;                     // 4'b1111 = inverted 0
+		endcase
+	end
 	else if(ac_ide) begin
 		case (chip_addr[6:1])
 			6'h00: autocfg_data = 4'b1101; // Zorro II, not memory, DiagArea valid
@@ -919,7 +954,9 @@ end
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_ide || ac_toccata); //$E80000 - $E8FFFF
 // Megamiga, October 2026: + ac_eth
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_toccata); //$E80000 - $E8FFFF
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
+//wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
+// Megamiga, October 2026: + ac_rtgb
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_rtgb || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
 
 //reg       z2ram_ena;  // Megamiga: declared above the CPU generate block
 reg [4:0] z3ram_base0;
@@ -946,6 +983,9 @@ always @(posedge clk) begin : autoconfig_blk
 		//ac_memcard  <= cpucfg[1] ? fastramcfg : fastramcfg[2] ? 3'd3 : {1'b0, fastramcfg[1:0]};
 		ac_memcard  <= {1'b0, fastramcfg[1:0]};
 		ac_z3          <= z3ena & cpucfg[1];
+		ac_rtgb         <= cpucfg[1];        // Megamiga: the RTG board (68020/68040)
+		rtgb_configured <= 0;
+		rtgb_base       <= 9'h000;
 		z3_configured  <= 0;
 		z3_base        <= 8'h00;
 		//ac_toccata  <= 1; // MiSTer2MEGA65 (AExp): Toccata not ported, see above
@@ -988,6 +1028,18 @@ always @(posedge clk) begin : autoconfig_blk
 		// before, which we do not need: a byte write to an even address puts
 		// the byte on both halves of the data bus). 0x4C = "shut up": there is
 		// no room for the board, it stays unconfigured.
+		// Megamiga, October 2026: the RTG board, base A31..A16 as a word to 0x44 like
+		// the Zorro III RAM board; an 8 MB board needs A31..A23
+		else if(ac_rtgb) begin
+			if (chip_addr[6:1] == 6'b100010) begin // Register 0x44 - base address
+				rtgb_base       <= cpu_dout[15:7];
+				rtgb_configured <= 1;
+				ac_rtgb         <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_rtgb         <= 0;
+			end
+		end
 		else if(ac_ide) begin
 			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - config
 				ide_base       <= cpu_dout[15:8];
