@@ -172,7 +172,13 @@ module cpu_wrapper
 //assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram);
 // Megamiga, October 2026: sel_rtg back - the RTG board memory at $02000000 (68020 only,
 // a 32-bit address), served by the parent from the MEGA65's HyperRAM (ramaddr[26] below)
-assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
+//assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
+// Megamiga, October 2026 (CPU040): the select inside this module is ramsel_i; the
+// port drops for the clock in which the AP68040 path holds a registered RAM answer
+// (ram_hold, see g_ap040), always 0 for TG68K and fx68k
+wire ramsel_i       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
+wire ram_hold;
+assign ramsel       = ramsel_i & ~ram_hold;
 assign ramshared    = 1'b0;
 
 // MiSTer2MEGA65 (AExp fork), October 2026: the IDE board occupies 128 KB at
@@ -289,7 +295,7 @@ reg  [31:0] cpu_addr;
 reg  [15:0] cpu_dout;
 // MiSTer2MEGA65 (AExp fork), October 2026: + the IDE board (ext_*)
 //wire [15:0] cpu_din = ramsel ? ramdat : fastchip_selack ? fastchip_dout : {sel_autoconfig ? autocfg_data : chip_data[15:12], chip_data[11:0]};
-wire [15:0] cpu_din = ramsel ? ramdat : ext_sel ? ext_dout : fastchip_selack ? fastchip_dout : {sel_autoconfig ? autocfg_data : chip_data[15:12], chip_data[11:0]};
+wire [15:0] cpu_din = ramsel_i ? ramdat : ext_sel ? ext_dout : fastchip_selack ? fastchip_dout : {sel_autoconfig ? autocfg_data : chip_data[15:12], chip_data[11:0]};
 reg         wr;
 reg         uds_in;
 reg         lds_in;
@@ -337,7 +343,7 @@ always @* begin
 		uds_in       = uds_o;
 		lds_in       = lds_o;
 		reset_out    = reset_out_o;
-		chip_as      = ramsel | ext_sel | as_o;      // AExp: ext_sel added
+		chip_as      = ramsel_i | ext_sel | as_o;    // AExp: ext_sel added
 		chip_rw      = wr_o;
 		chip_uds     = uds_o;
 		chip_lds     = lds_o;
@@ -414,6 +420,7 @@ cpu_inst_p
 	.cacr_out(cacr_p),
 	.vbr_out(vbr_p)
 );
+assign ram_hold = 1'b0;
 end
 else begin : g_ap040
 // The AP68040 pipelined core with TG68K's bus (AP040_BUS16 = 1: its
@@ -443,8 +450,26 @@ reg  [2:0] wk_st;
 wire wk_start = (wk_st == WK_IDLE) && wk_req && (a_state == 2'b01);
 wire wk_bus   = (wk_st == WK_HI) || (wk_st == WK_LO);
 wire wk_hold  = wk_start || wk_bus || (wk_st == WK_GAP);
-// the same completion TG68K's clock enable uses
-wire bus_done = chipready | ramready | fastchip_ready | ext_ready;
+// The RAM answer comes from the SDRAM controller's clock (113.5 MHz): taken
+// combinationally into the clock enable it reached the core's bus unit through
+// 19 logic levels in one fast period (build cpu040-a, -0.41 ns). Registered here
+// instead, at the cost of one CPU clock per RAM access, like apolkosnik's MiSTer
+// wrapper. amiga_sdram ends a 68020 cycle by dropping its chip select on the CPU
+// clock in which it signals ready; the port select stays low in the clock that
+// holds the registered answer, so the select does not come back for a second
+// access before the adapter has gone idle.
+reg        ram_rdy_r;
+reg [15:0] ram_dat_r;
+always @(posedge clk) begin
+	if (!reset) ram_rdy_r <= 0;
+	else        ram_rdy_r <= ~ram_rdy_r & cpu_req & ramsel_i & ramready;
+	if (ramready) ram_dat_r <= ramdat;
+end
+assign ram_hold = ram_rdy_r;
+wire [15:0] a_din = ram_rdy_r ? ram_dat_r : cpu_din;
+// the completion TG68K's clock enable uses, with the registered RAM answer
+//wire bus_done = chipready | ramready | fastchip_ready | ext_ready;
+wire bus_done = chipready | ram_rdy_r | fastchip_ready | ext_ready;
 
 always @(posedge clk) begin
 	if (!reset) begin
@@ -460,9 +485,9 @@ always @(posedge clk) begin
 				end
 				else wk_st <= WK_HI;
 			end
-		WK_HI:   if (bus_done) begin wk_data[31:16] <= cpu_din; wk_st <= WK_GAP; end
+		WK_HI:   if (bus_done) begin wk_data[31:16] <= a_din; wk_st <= WK_GAP; end
 		WK_GAP:  wk_st <= WK_LO;
-		WK_LO:   if (bus_done) begin wk_data[15:0] <= cpu_din; wk_ack <= 1; wk_st <= WK_DONE; end
+		WK_LO:   if (bus_done) begin wk_data[15:0] <= a_din; wk_ack <= 1; wk_st <= WK_DONE; end
 		WK_DONE: if (!wk_req) begin wk_ack <= 0; wk_berr <= 0; wk_st <= WK_IDLE; end
 		default: wk_st <= WK_IDLE;
 	endcase
@@ -519,7 +544,7 @@ ap040_pipe_tg68k_compat #(
 	.cache_z3_ena0(z3_configured),
 	.cache_z3_base1(4'd0),
 	.cache_z3_ena1(1'b0),
-	.data_in(cpu_din),
+	.data_in(a_din),
 	.ipl(cpu_ipl),
 	.ipl_autovector(1'b1),
 	.berr(bus_berr),
@@ -649,7 +674,7 @@ fx68k cpu_inst_o
 	// cycle still gets its DTACK from the chip bus.
 	//.DTACKn(chip_dtack),
 	// MiSTer2MEGA65 (AExp fork), October 2026: + the IDE board (ext_ready)
-	.DTACKn(ramsel ? ~ramready : ext_sel ? ~ext_ready : chip_dtack),
+	.DTACKn(ramsel_i ? ~ramready : ext_sel ? ~ext_ready : chip_dtack),
 
 	.FC0(fc_o[0]),
 	.FC1(fc_o[1]),
@@ -699,7 +724,7 @@ always @(posedge clk) begin
 	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack;
 	// Megamiga, October 2026: + the network card
 	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~(sel_ide & ext_done);
-	chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth) & ext_done);
+	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth) & ext_done);
 	cpu_ipl <= ipl_i;
 end
 
