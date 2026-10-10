@@ -26,7 +26,7 @@
 // B80108:B80109 : 11:0 : HSIZE
 // B8010A:B8010B : 11:0 : VSIZE
 // B8010C:B8010D : 13:0 : STRIDE
-// B8010E:B8010F :  7:0 : ID = 50 / VERSION = 01
+// B8010E:B8010F :  7:0 : ID = 50 / VERSION = 01 (Megamiga: 4D / 01, see the read mux)
 
 // B80400..B807FF CLUT : 256 * 32bits 00 / RR / GG / BB
 
@@ -95,7 +95,14 @@ always @(posedge clk) begin
 			4: dout <= hsize;
 			5: dout <= vsize;
 			6: dout <= stride;
-			7: dout <= 16'h5001;
+			// Megamiga, October 2026: NOT MiSTer's ID. AmigaVision's ags-uname reads
+			// $B8010E to detect a MiSTer ($5001) and then mounts MiSTerFileSystem,
+			// which spins forever on the HPS mailbox at $DD4000 that this core does
+			// not have (black screen at boot). Our driver (CORE/rtg/MiSTer.card.asm)
+			// never reads this register, and MiSTer's stock driver does not work
+			// with this board anyway (other FB_BASE and memory size).
+			//7: dout <= 16'h5001;
+			7: dout <= 16'h4D01;
 		endcase
 	end
 	if (r_pal) dout <= rs[1] ? pal_dr[15:0] : pal_dr[23:16];
