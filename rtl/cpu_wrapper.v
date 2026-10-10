@@ -92,6 +92,8 @@ module cpu_wrapper
 	output reg        reset_out,
 
 	input             clk,
+	// Megamiga, October 2026: the AP68040's own clock (CPU040 = 2 only)
+	input             clk_cpu,
 	input             ph1,
 	input             ph2,
 
@@ -455,19 +457,8 @@ wire [31:0] a_addr, a_cacr;
 wire  [1:0] a_state;
 wire        a_wr, a_uds, a_lds, a_lw;
 wire        a_maint;
-wire        wk_req, wk_we;
-wire [31:0] wk_addr, wk_wdat;
-reg         wk_ack, wk_berr;
-reg  [31:0] wk_data;
+wire        wk_hold;      // the walker bridge owns the bus (CPU040 = 1 only)
 
-// walker bridge: IDLE -> HI (bits 31:16) -> GAP (bus idle) -> LO (15:0) -> DONE
-// (ack held until the MMU drops its request, which it does for at least one
-// clock between two descriptor transactions)
-localparam WK_IDLE = 3'd0, WK_HI = 3'd1, WK_GAP = 3'd2, WK_LO = 3'd3, WK_DONE = 3'd4;
-reg  [2:0] wk_st;
-wire wk_start = (wk_st == WK_IDLE) && wk_req && (a_state == 2'b01);
-wire wk_bus   = (wk_st == WK_HI) || (wk_st == WK_LO);
-wire wk_hold  = wk_start || wk_bus || (wk_st == WK_GAP);
 // The RAM answer comes from the SDRAM controller's clock (113.5 MHz): taken
 // combinationally into the clock enable it reached the core's bus unit through
 // 19 logic levels in one fast period (build cpu040-a, -0.41 ns). Registered here
@@ -488,6 +479,45 @@ wire [15:0] a_din = ram_rdy_r ? ram_dat_r : cpu_din;
 // the completion TG68K's clock enable uses, with the registered RAM answer
 //wire bus_done = chipready | ramready | fastchip_ready | ext_ready;
 wire bus_done = chipready | ram_rdy_r | fastchip_ready | ext_ready;
+
+// physical-bus watchdog (2^20 clocks = 37 ms: Chip RAM may wait long for a slot,
+// but every target on this bus answers, so it only fires on a real fault)
+wire bus_berr;
+ap040_bus_timeout #(.COUNTER_BITS(20)) bus_timeout (
+	.clk(clk),
+	.nreset(reset & reset_out_p),
+	.req(cpu_req & ~wk_hold),
+	.complete(bus_done),
+	.berr(bus_berr)
+);
+
+// chipset writes to Chip RAM, registered once, into the data cache's snoop port
+reg        snp_stb;
+reg [20:1] snp_addr;
+always @(posedge clk) begin
+	snp_stb  <= snoop_stb;
+	snp_addr <= snoop_addr;
+end
+
+// 040 CACR: bit 15 = instruction cache. Minimig's cpu_cache_new takes bit 0 =
+// enable and clears on a rising bit 3: CINV/CPUSH clear it as well.
+assign cacr_p     = {a_maint, 2'b00, a_cacr[15]};
+
+if (CPU040 == 1) begin : g_bus
+// CPU040 = 1: the core on the bus clock
+wire        wk_req, wk_we;
+wire [31:0] wk_addr, wk_wdat;
+reg         wk_ack, wk_berr;
+reg  [31:0] wk_data;
+
+// walker bridge: IDLE -> HI (bits 31:16) -> GAP (bus idle) -> LO (15:0) -> DONE
+// (ack held until the MMU drops its request, which it does for at least one
+// clock between two descriptor transactions)
+localparam WK_IDLE = 3'd0, WK_HI = 3'd1, WK_GAP = 3'd2, WK_LO = 3'd3, WK_DONE = 3'd4;
+reg  [2:0] wk_st;
+wire wk_start = (wk_st == WK_IDLE) && wk_req && (a_state == 2'b01);
+wire wk_bus   = (wk_st == WK_HI) || (wk_st == WK_LO);
+assign wk_hold = wk_start || wk_bus || (wk_st == WK_GAP);
 
 always @(posedge clk) begin
 	if (!reset) begin
@@ -518,28 +548,6 @@ assign wr_p       = wk_bus ? ~wk_we : a_wr;
 assign uds_p      = wk_bus ? 1'b0 : a_uds;
 assign lds_p      = wk_bus ? 1'b0 : a_lds;
 assign longword   = wk_bus ? 1'b0 : a_lw;
-// 040 CACR: bit 15 = instruction cache. Minimig's cpu_cache_new takes bit 0 =
-// enable and clears on a rising bit 3: CINV/CPUSH clear it as well.
-assign cacr_p     = {a_maint, 2'b00, a_cacr[15]};
-
-// physical-bus watchdog (2^20 clocks = 37 ms: Chip RAM may wait long for a slot,
-// but every target on this bus answers, so it only fires on a real fault)
-wire bus_berr;
-ap040_bus_timeout #(.COUNTER_BITS(20)) bus_timeout (
-	.clk(clk),
-	.nreset(reset & reset_out_p),
-	.req(cpu_req & ~wk_hold),
-	.complete(bus_done),
-	.berr(bus_berr)
-);
-
-// chipset writes to Chip RAM, registered once, into the data cache's snoop port
-reg        snp_stb;
-reg [20:1] snp_addr;
-always @(posedge clk) begin
-	snp_stb  <= snoop_stb;
-	snp_addr <= snoop_addr;
-end
 
 ap040_pipe_tg68k_compat #(
 	.AP040_HAS_MMU(1),
@@ -626,6 +634,37 @@ ap040_pipe_tg68k_compat #(
 	.m_ack(1'b0),
 	.m_rdata(32'd0)
 );
+end
+else begin : g_island
+// CPU040 = 2: the core on its own clock (clk_cpu), behind ap040_island's request
+// channel; its table walks use the same channel, so there is no walker bridge
+assign wk_hold = 1'b0;
+ap040_island cpu_inst_p (
+	.clk_cpu(clk_cpu),
+	.clk(clk),
+	.nreset(reset),
+	.clkena_in(~cpu_req | bus_done | bus_berr),
+	.berr(bus_berr),
+	.data_in(a_din),
+	.addr_out(cpu_addr_p),
+	.data_write(cpu_dout_p),
+	.nwr(wr_p),
+	.nuds(uds_p),
+	.nlds(lds_p),
+	.busstate(cpustate_p),
+	.longword(longword),
+	.ipl(cpu_ipl),
+	.snoop_stb(snp_stb),
+	.snoop_addr({11'd0, snp_addr, 1'b0}),
+	.cache_z2_ena(z2ram_ena),
+	.cache_z3_base0(z3_base),
+	.cache_z3_ena0(z3_configured),
+	.nresetout(reset_out_p),
+	.cacr_out(a_cacr),
+	.vbr_out(vbr_p),
+	.cache_maint(a_maint)
+);
+end
 end endgenerate
 
 //TG68KdotC_Kernel
