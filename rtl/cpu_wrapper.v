@@ -85,7 +85,9 @@
 
 module cpu_wrapper
 #(
-	parameter CPU040 = 0
+	parameter CPU040 = 0,
+	// Megamiga (cpu040): 1 = the AP68040's speed-ups on (CPU040 = 2 only)
+	parameter CPU040_FAST = 0
 )
 (
 	input             reset,
@@ -639,7 +641,10 @@ else begin : g_island
 // CPU040 = 2: the core on its own clock (clk_cpu), behind ap040_island's request
 // channel; its table walks use the same channel, so there is no walker bridge
 assign wk_hold = 1'b0;
-ap040_island cpu_inst_p (
+ap040_island #(
+	.POST_STORES(CPU040_FAST), .STORE_BUF(CPU040_FAST), .FWD(CPU040_FAST), .RAS(CPU040_FAST),
+	.PRECISE(CPU040_FAST), .SB_MMU(CPU040_FAST), .BTFN(CPU040_FAST), .LDX(CPU040_FAST)
+) cpu_inst_p (
 	.clk_cpu(clk_cpu),
 	.clk(clk),
 	.nreset(reset),

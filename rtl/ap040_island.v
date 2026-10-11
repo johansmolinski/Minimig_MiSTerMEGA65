@@ -28,6 +28,18 @@
 `include "ap040_defs.svh"
 
 module ap040_island
+#(
+	// the core's speed-ups (ap040_pipe_tg68k_compat), 0 = off; MinimigAGA_TC64
+	// ships all of them on but COPYBACK (which it uses only for its DDR3 board)
+	parameter POST_STORES = 0,
+	parameter STORE_BUF   = 0,
+	parameter FWD         = 0,
+	parameter RAS         = 0,
+	parameter PRECISE     = 0,
+	parameter SB_MMU      = 0,
+	parameter BTFN        = 0,
+	parameter LDX         = 0
+)
 (
 	input             clk_cpu,
 	input             clk,
@@ -176,10 +188,17 @@ ap040_pipe_tg68k_compat #(
 	.AP040_HAS_MMU(1),
 	.AP040_HAS_FPU(1),
 	.AP040_ENABLE_CACHE(1),
-	.AP040_POST_STORES(0),
+	.AP040_POST_STORES(POST_STORES),
 	.AP040_FILL_CHANNEL(0),
 	.AP040_BUS16(0),
-	.AP040_IFP(1)
+	.AP040_IFP(1),
+	.AP040_STORE_BUF(STORE_BUF),
+	.AP040_FWD(FWD),
+	.AP040_RAS(RAS),
+	.AP040_PRECISE(PRECISE),
+	.AP040_SB_MMU(SB_MMU),
+	.AP040_BTFN(BTFN),
+	.AP040_LDX(LDX)
 ) core (
 	.clk(clk_cpu),
 	.nreset(c_nreset),
