@@ -670,8 +670,12 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	// posting into the SDRAM corrupted data on the board (stage 4), and
 	// nothing but the CPU writes the DDR3 board.  A flat bench: all of it
 	// but the bench's registers.
+	//wire cb_win = cache_allow_all ? (mm_addr[15:8] != 8'hF1) :
+	//              ((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1);
+	// Megamiga: the Zorro II and the 16 MB Zorro III RAM (cache_zwin): only the CPU
+	// writes them (the IDE and network boards are programmed I/O)
 	wire cb_win = cache_allow_all ? (mm_addr[15:8] != 8'hF1) :
-	              ((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1);
+	              (((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1) || cache_zwin);
 
 	// The instruction read path (plan M14).  The core launches a lookup
 	// with every fetch it issues (ifp_req includes the clock enable): the

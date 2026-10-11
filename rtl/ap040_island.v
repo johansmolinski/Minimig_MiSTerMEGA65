@@ -54,6 +54,8 @@ module ap040_island
 	parameter SB_MMU      = 0,
 	parameter BTFN        = 0,
 	parameter LDX         = 0,
+	// copyback for the Zorro RAM pages the MMU (or a TTR) marks CM = 01; needs POST_STORES
+	parameter COPYBACK    = 0,
 	// 1: writes are acknowledged when queued (see above); 0: when done
 	parameter WRITE_BUF   = 0,
 	// 1: Fast RAM accesses and line fills through the fp_* port (see above)
@@ -247,7 +249,8 @@ ap040_pipe_tg68k_compat #(
 	.AP040_PRECISE(PRECISE),
 	.AP040_SB_MMU(SB_MMU),
 	.AP040_BTFN(BTFN),
-	.AP040_LDX(LDX)
+	.AP040_LDX(LDX),
+	.AP040_COPYBACK(COPYBACK)
 ) core (
 	.clk(clk_cpu),
 	.nreset(c_nreset),

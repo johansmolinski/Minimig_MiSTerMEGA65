@@ -91,7 +91,11 @@ module cpu_wrapper
 	parameter CPU040_FAST = 0,
 	// Megamiga (cpu040, CPU040 = 2 only): 1 = the island's Fast RAM port (fp_*) for
 	// Zorro II/III RAM accesses and the core's line fills; cpu_cache_new is then off
-	parameter CPU040_FASTRAM = 0
+	parameter CPU040_FASTRAM = 0,
+	// Megamiga (cpu040, CPU040 = 2 only): the AP68040's speed-ups one by one, OR'ed with
+	// CPU040_FAST = 2 (all but copyback): bit 0 POST_STORES, 1 STORE_BUF, 2 FWD, 3 RAS,
+	// 4 PRECISE, 5 SB_MMU, 6 BTFN, 7 LDX, 8 COPYBACK (Zorro RAM, needs POST_STORES)
+	parameter CPU040_OPTS = 0
 )
 (
 	input             reset,
@@ -665,9 +669,14 @@ else begin : g_island
 assign wk_hold = 1'b0;
 ap040_island #(
 	// CPU040_FAST: 1 = the island's write buffer, 2 = also the core's own speed-ups
-	.POST_STORES(CPU040_FAST >= 2), .STORE_BUF(CPU040_FAST >= 2), .FWD(CPU040_FAST >= 2),
-	.RAS(CPU040_FAST >= 2), .PRECISE(CPU040_FAST >= 2), .SB_MMU(CPU040_FAST >= 2),
-	.BTFN(CPU040_FAST >= 2), .LDX(CPU040_FAST >= 2),
+	//.POST_STORES(CPU040_FAST >= 2), .STORE_BUF(CPU040_FAST >= 2), .FWD(CPU040_FAST >= 2),
+	//.RAS(CPU040_FAST >= 2), .PRECISE(CPU040_FAST >= 2), .SB_MMU(CPU040_FAST >= 2),
+	//.BTFN(CPU040_FAST >= 2), .LDX(CPU040_FAST >= 2),
+	.POST_STORES(CPU040_FAST >= 2 || CPU040_OPTS[0]), .STORE_BUF(CPU040_FAST >= 2 || CPU040_OPTS[1]),
+	.FWD(CPU040_FAST >= 2 || CPU040_OPTS[2]), .RAS(CPU040_FAST >= 2 || CPU040_OPTS[3]),
+	.PRECISE(CPU040_FAST >= 2 || CPU040_OPTS[4]), .SB_MMU(CPU040_FAST >= 2 || CPU040_OPTS[5]),
+	.BTFN(CPU040_FAST >= 2 || CPU040_OPTS[6]), .LDX(CPU040_FAST >= 2 || CPU040_OPTS[7]),
+	.COPYBACK(CPU040_OPTS[8]),
 	.WRITE_BUF(CPU040_FAST >= 1),
 	.FASTRAM(CPU040_FASTRAM)
 ) cpu_inst_p (
