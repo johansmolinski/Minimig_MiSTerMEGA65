@@ -2,18 +2,23 @@
 // ap040_island.v - Megamiga, October 2026 (branch cpu040, EXPERIMENTAL)    //
 //                                                                          //
 // The AP68040 pipelined core on its own clock (clk_cpu), behind one        //
-// request channel to the 28 MHz bus (clk). On the CPU side the core's     //
+// request queue to the 28 MHz bus (clk). On the CPU side the core's        //
 // 32-bit master port (AP040_BUS16 = 0) and the MMU's table-walk port share //
-// the channel: a request is captured into registers and announced by a     //
-// toggle; the bus side runs it through ap040_bus16_adapter as TG68K-style  //
-// 16-bit cycles (the same bus contract as the core's own BUS16 mode), and  //
-// answers with a toggle. The core runs free (clock enable 1): a cache hit  //
+// the queue, an asynchronous FIFO (Gray-coded pointers); the bus side runs //
+// each entry through ap040_bus16_adapter as TG68K-style 16-bit cycles (the //
+// same bus contract as the core's own BUS16 mode), back to back, and       //
+// answers a read with a toggle. A write is acknowledged to the core as     //
+// soon as it is queued (WRITE_BUF = 1, a write buffer like the 68040's own //
+// - this bus never answers with an error, so nothing is lost); reads queue //
+// behind the writes before them, so the order of all accesses is kept. The core runs free (clock enable 1): a cache hit  //
 // costs no bus clock at all, and only a miss or an uncached access waits   //
 // for the 28 MHz bus.                                                      //
 //                                                                          //
 // Crossings (constrained in CORE.xdc by the clocks, see the cpu040 entry   //
 // in doc/developers/history.md):                                           //
-//   CPU -> bus  request toggle (2 FF) + request fields (held until ack)    //
+//   CPU -> bus  request FIFO: Gray write pointer (2 FF), entries written   //
+//               before the pointer moves                                   //
+//   bus -> CPU  FIFO read pointer (Gray, 2 FF)                             //
 //   bus -> CPU  answer toggle (2 FF) + read data (held until next request) //
 //   bus -> CPU  snoop toggle (2 FF) + address (held until the next snoop:  //
 //               the chipset writes at most every 4 bus clocks)             //
@@ -38,7 +43,9 @@ module ap040_island
 	parameter PRECISE     = 0,
 	parameter SB_MMU      = 0,
 	parameter BTFN        = 0,
-	parameter LDX         = 0
+	parameter LDX         = 0,
+	// 1: writes are acknowledged when queued (see above); 0: when done
+	parameter WRITE_BUF   = 0
 )
 (
 	input             clk_cpu,
@@ -101,14 +108,18 @@ reg  [31:0] wk_data;
 wire [31:0] c_cacr, c_vbr;
 wire        c_resetout, c_maint;
 
-// the request channel, CPU side
-reg         c_busy, c_walk;
-reg         c_req_t;                     // toggles once per request
-reg         r_write, r_instr;
-reg   [1:0] r_size;
-reg  [31:0] r_addr, r_wdata;
-reg   [2:0] r_fc;
-wire        b_ack_t;                     // bus side: toggles once per answer
+// the request queue: 8 entries of {answer, walk, write, instr, size, fc, addr, wdata}
+localparam QW = 1 + 1 + 1 + 1 + 2 + 3 + 32 + 32;
+reg  [QW-1:0] q_mem [0:7];
+reg     [3:0] c_wp, c_wpg;                // write pointer, binary and Gray
+(* ASYNC_REG = "TRUE" *) reg [3:0] c_rpg_s0, c_rpg_s1;   // the bus side's read pointer (Gray)
+reg     [3:0] b_rp, b_rpg;            // the bus side's read pointer (bus clock)
+function [3:0] bin2gray(input [3:0] b); bin2gray = b ^ (b >> 1); endfunction
+wire    [3:0] c_wp1  = c_wp + 4'd1;
+wire          c_full = (bin2gray(c_wp) == {~c_rpg_s1[3:2], c_rpg_s1[1:0]});
+
+reg         c_busy, c_walk;               // waiting for a read's answer
+wire        b_ack_t;                      // bus side: toggles once per answer
 wire [31:0] b_rdata;
 wire        b_err;
 reg         c_snp_stb;
@@ -116,12 +127,24 @@ reg  [31:0] c_snp_addr;
 wire        b_snp_t;
 wire [31:0] b_snp_addr;
 
+// a request to queue: the walker first. An entry wants an answer unless it is a
+// write and WRITE_BUF is set; then it is acknowledged when queued.
+wire        n_walk  = wk_req;
+wire        n_write = n_walk ? wk_we : m_write;
+wire        n_ans   = !(n_write && WRITE_BUF != 0);
+wire [QW-1:0] n_ent = n_walk ? {n_ans, 1'b1, wk_we, 1'b0, `AP040_SZ_L, 3'd5, wk_addr, wk_wdat}
+                             : {n_ans, 1'b0, m_write, m_instr, m_size, m_fc, m_addr, m_wdata};
+
 always @(posedge clk_cpu) begin
-	c_ack_s <= {c_ack_s[0], b_ack_t};
-	c_snp_s <= {c_snp_s[0], b_snp_t};
+	c_ack_s  <= {c_ack_s[0], b_ack_t};
+	c_snp_s  <= {c_snp_s[0], b_snp_t};
+	c_rpg_s0 <= b_rpg;
+	c_rpg_s1 <= c_rpg_s0;
 	if (!c_nreset) begin
 		c_busy  <= 0;
 		c_walk  <= 0;
+		c_wp    <= 0;
+		c_wpg   <= 0;
 		c_ack_p <= c_ack_s[1];
 		c_snp_p <= c_snp_s[1];
 		m_ack   <= 0;
@@ -156,33 +179,19 @@ always @(posedge clk_cpu) begin
 		end
 		// a new request; not in the clock of an answer, whose requester only
 		// drops its request at the edge that consumes the answer
-		else if (!m_ack && !wk_ack && !wk_berr) begin
-			if (wk_req) begin
-				c_busy  <= 1;
-				c_walk  <= 1;
-				c_req_t <= ~c_req_t;
-				r_write <= wk_we;
-				r_instr <= 0;
-				r_size  <= `AP040_SZ_L;
-				r_addr  <= wk_addr;
-				r_wdata <= wk_wdat;
-				r_fc    <= 3'd5;            // supervisor data
+		else if (!m_ack && !wk_ack && !wk_berr && (wk_req || m_req) && !c_full) begin
+			q_mem[c_wp[2:0]] <= n_ent;
+			c_wp  <= c_wp1;
+			c_wpg <= bin2gray(c_wp1);
+			if (n_ans) begin
+				c_busy <= 1;
+				c_walk <= n_walk;
 			end
-			else if (m_req) begin
-				c_busy  <= 1;
-				c_walk  <= 0;
-				c_req_t <= ~c_req_t;
-				r_write <= m_write;
-				r_instr <= m_instr;
-				r_size  <= m_size;
-				r_addr  <= m_addr;
-				r_wdata <= m_wdata;
-				r_fc    <= m_fc;
-			end
+			else if (n_walk) wk_ack <= 1;          // a queued write is done for the core
+			else             m_ack  <= 1;
 		end
 	end
 end
-initial c_req_t = 0;
 
 ap040_pipe_tg68k_compat #(
 	.AP040_HAS_MMU(1),
@@ -289,10 +298,15 @@ end
 //--------------------------------------------------------------------------
 // bus side
 //--------------------------------------------------------------------------
-(* ASYNC_REG = "TRUE" *) reg [1:0] b_req_s;
+(* ASYNC_REG = "TRUE" *) reg [3:0] b_wpg_s0, b_wpg_s1;   // the CPU side's write pointer (Gray)
 (* ASYNC_REG = "TRUE" *) reg [65:0] b_lvl_s0;
-reg         b_req_p;
 reg         b_req;
+reg         b_ans;                        // the entry in progress wants an answer
+reg         b_walk;
+reg         r_write, r_instr;
+reg   [1:0] r_size;
+reg  [31:0] r_addr, r_wdata;
+reg   [2:0] r_fc;
 reg         b_ack_tr;
 reg  [31:0] b_rdata_r;
 reg         b_err_r;
@@ -301,6 +315,9 @@ reg         b_snp_p;
 reg  [31:0] b_snp_addr_r;
 wire        a_ack;
 wire [31:0] a_rdata;
+wire  [3:0] b_rp1   = b_rp + 4'd1;
+wire        b_empty = (b_rpg == b_wpg_s1);
+wire [QW-1:0] b_ent = q_mem[b_rp[2:0]];
 
 always @(posedge clk) begin
 	b_lvl_s0 <= {c_cacr_r[31], c_cacr_r[15], c_vbr_r, c_resetout_r, c_maint_r, 30'd0};
@@ -312,10 +329,12 @@ always @(posedge clk) begin
 end
 
 always @(posedge clk) begin
-	b_req_s <= {b_req_s[0], c_req_t};
+	b_wpg_s0 <= c_wpg;
+	b_wpg_s1 <= b_wpg_s0;
 	if (!nreset) begin
 		b_req    <= 0;
-		b_req_p  <= b_req_s[1];
+		b_rp     <= 0;
+		b_rpg    <= 0;
 		b_ack_tr <= 0;
 		b_err_r  <= 0;
 		b_snp_tr <= 0;
@@ -331,27 +350,30 @@ always @(posedge clk) begin
 			b_snp_tr     <= ~b_snp_tr;
 			b_snp_addr_r <= snoop_addr;
 		end
-		if (!b_req && b_req_s[1] != b_req_p) begin
-			b_req_p <= b_req_s[1];
-			b_req   <= 1;               // r_* are stable since the toggle
+		if (!b_req && !b_empty) begin
+			// the next entry; it was written before the pointer that shows it
+			{b_ans, b_walk, r_write, r_instr, r_size, r_fc, r_addr, r_wdata} <= b_ent;
+			b_rp  <= b_rp1;
+			b_rpg <= bin2gray(b_rp1);
+			b_req <= 1;
 		end
 		else if (b_req && a_ack) begin
 			b_req     <= 0;
 			b_rdata_r <= a_rdata;
 			b_err_r   <= 0;
-			b_ack_tr  <= ~b_ack_tr;
+			if (b_ans) b_ack_tr <= ~b_ack_tr;
 		end
 		else if (b_req && berr) begin
 			b_req     <= 0;
 			b_rdata_r <= 32'hFFFFFFFF;
-			b_err_r   <= 1;
-			b_ack_tr  <= ~b_ack_tr;
+			b_err_r   <= b_walk;
+			if (b_ans) b_ack_tr <= ~b_ack_tr;
 		end
 	end
 end
 assign b_ack_t    = b_ack_tr;
 assign b_rdata    = b_rdata_r;
-assign b_err      = b_err_r & c_walk;
+assign b_err      = b_err_r;
 assign b_snp_t    = b_snp_tr;
 assign b_snp_addr = b_snp_addr_r;
 
