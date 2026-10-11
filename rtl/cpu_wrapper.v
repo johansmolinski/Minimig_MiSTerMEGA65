@@ -86,7 +86,8 @@
 module cpu_wrapper
 #(
 	parameter CPU040 = 0,
-	// Megamiga (cpu040): 1 = the AP68040's speed-ups on (CPU040 = 2 only)
+	// Megamiga (cpu040, CPU040 = 2 only): 1 = the island's write buffer, 2 = also
+	// the AP68040's own speed-ups (they lengthen its paths to ~27 ns)
 	parameter CPU040_FAST = 0
 )
 (
@@ -642,9 +643,11 @@ else begin : g_island
 // channel; its table walks use the same channel, so there is no walker bridge
 assign wk_hold = 1'b0;
 ap040_island #(
-	.POST_STORES(CPU040_FAST), .STORE_BUF(CPU040_FAST), .FWD(CPU040_FAST), .RAS(CPU040_FAST),
-	.PRECISE(CPU040_FAST), .SB_MMU(CPU040_FAST), .BTFN(CPU040_FAST), .LDX(CPU040_FAST),
-	.WRITE_BUF(CPU040_FAST)
+	// CPU040_FAST: 1 = the island's write buffer, 2 = also the core's own speed-ups
+	.POST_STORES(CPU040_FAST >= 2), .STORE_BUF(CPU040_FAST >= 2), .FWD(CPU040_FAST >= 2),
+	.RAS(CPU040_FAST >= 2), .PRECISE(CPU040_FAST >= 2), .SB_MMU(CPU040_FAST >= 2),
+	.BTFN(CPU040_FAST >= 2), .LDX(CPU040_FAST >= 2),
+	.WRITE_BUF(CPU040_FAST >= 1)
 ) cpu_inst_p (
 	.clk_cpu(clk_cpu),
 	.clk(clk),
