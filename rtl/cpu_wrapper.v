@@ -161,6 +161,9 @@ module cpu_wrapper
 	// Megamiga, October 2026 (CPU040): a chipset write to Chip RAM, this clock
 	input             snoop_stb,
 	input      [20:1] snoop_addr,
+	// Megamiga, October 2026 (CPU040 != 0): 1 = the AP68040, 0 = TG68K (static between
+	// resets: the profile's CPU radio, which cold-boots the Amiga when it changes)
+	input             cpu040_sel,
 	// Megamiga, October 2026 (CPU040): 512 KB Slow RAM at $C00000 (the 68040 caches it)
 	input             slowram_ena,
 	// Megamiga, October 2026 (CPU040 = 2, CPU040_FASTRAM = 1): the 68040's Fast RAM port
@@ -466,6 +469,15 @@ assign ram_hold = 1'b0;
 assign {fp_req, fp_we, fp_line, fp_addr, fp_be, fp_wdata} = 0;
 end
 else begin : g_ap040
+// Megamiga, October 2026: TG68K AND the AP68040, chosen at run time by cpu040_sel (the
+// profile's CPU radio; a change cold-boots the Amiga). The core not selected is held in
+// reset; its outputs are multiplexed out below (f_* = the 68040, t_* = TG68K).
+wire [15:0] f_dout;
+wire [31:0] f_addr;
+wire  [1:0] f_state;
+wire  [3:0] f_cacr;
+wire [31:0] f_vbr;
+wire        f_wr, f_uds, f_lds, f_rst_out, f_lw;
 // The AP68040 pipelined core with TG68K's bus (AP040_BUS16 = 1: its
 // ap040_bus16_adapter splits every transfer into TG68K-style 16-bit cycles
 // with an idle cycle between them, completed by the same clock enable). The
@@ -497,7 +509,8 @@ always @(posedge clk) begin
 	else        ram_rdy_r <= ~ram_rdy_r & cpu_req & ramsel_i & ramready;
 	if (ramready) ram_dat_r <= ramdat;
 end
-assign ram_hold = ram_rdy_r;
+//assign ram_hold = ram_rdy_r;
+assign ram_hold = ram_rdy_r & cpu040_sel;   // TG68K takes ramready as it is
 wire [15:0] a_din = ram_rdy_r ? ram_dat_r : cpu_din;
 // the completion TG68K's clock enable uses, with the registered RAM answer
 //wire bus_done = chipready | ramready | fastchip_ready | ext_ready;
@@ -508,7 +521,7 @@ wire bus_done = chipready | ram_rdy_r | fastchip_ready | ext_ready;
 wire bus_berr;
 ap040_bus_timeout #(.COUNTER_BITS(20)) bus_timeout (
 	.clk(clk),
-	.nreset(reset & reset_out_p),
+	.nreset(reset & f_rst_out),
 	.req(cpu_req & ~wk_hold),
 	.complete(bus_done),
 	.berr(bus_berr)
@@ -525,8 +538,8 @@ end
 // 040 CACR: bit 15 = instruction cache. Minimig's cpu_cache_new takes bit 0 =
 // enable and clears on a rising bit 3: CINV/CPUSH clear it as well.
 // With the Fast RAM port that cache is off: the port bypasses it, so it would go stale.
-//assign cacr_p     = {a_maint, 2'b00, a_cacr[15]};
-assign cacr_p     = {a_maint, 2'b00, a_cacr[15] & ~(CPU040 == 2 && CPU040_FASTRAM != 0)};
+//assign f_cacr     = {a_maint, 2'b00, a_cacr[15]};
+assign f_cacr     = {a_maint, 2'b00, a_cacr[15] & ~(CPU040 == 2 && CPU040_FASTRAM != 0)};
 
 if (CPU040 == 1) begin : g_bus
 // CPU040 = 1: the core on the bus clock
@@ -566,13 +579,13 @@ always @(posedge clk) begin
 	endcase
 end
 
-assign cpu_addr_p = wk_bus ? {wk_addr[31:2], wk_st == WK_LO, 1'b0} : a_addr;
-assign cpu_dout_p = wk_bus ? ((wk_st == WK_LO) ? wk_wdat[15:0] : wk_wdat[31:16]) : a_dout;
-assign cpustate_p = wk_bus ? (wk_we ? 2'b11 : 2'b10) : (wk_st == WK_GAP) ? 2'b01 : a_state;
-assign wr_p       = wk_bus ? ~wk_we : a_wr;
-assign uds_p      = wk_bus ? 1'b0 : a_uds;
-assign lds_p      = wk_bus ? 1'b0 : a_lds;
-assign longword   = wk_bus ? 1'b0 : a_lw;
+assign f_addr = wk_bus ? {wk_addr[31:2], wk_st == WK_LO, 1'b0} : a_addr;
+assign f_dout = wk_bus ? ((wk_st == WK_LO) ? wk_wdat[15:0] : wk_wdat[31:16]) : a_dout;
+assign f_state = wk_bus ? (wk_we ? 2'b11 : 2'b10) : (wk_st == WK_GAP) ? 2'b01 : a_state;
+assign f_wr       = wk_bus ? ~wk_we : a_wr;
+assign f_uds      = wk_bus ? 1'b0 : a_uds;
+assign f_lds      = wk_bus ? 1'b0 : a_lds;
+assign f_lw       = wk_bus ? 1'b0 : a_lw;
 
 ap040_pipe_tg68k_compat #(
 	.AP040_HAS_MMU(1),
@@ -584,7 +597,8 @@ ap040_pipe_tg68k_compat #(
 	.AP040_IFP(1)
 ) cpu_inst_p (
 	.clk(clk),
-	.nreset(reset),
+	//.nreset(reset),
+	.nreset(reset & cpu040_sel),   // held in reset while TG68K is selected
 	.clkena_in(~wk_hold & (~cpu_req | bus_done | bus_berr)),
 	.cache_allow_all(1'b0),
 	.cache_snoop_stb(snp_stb),
@@ -609,7 +623,7 @@ ap040_pipe_tg68k_compat #(
 	.nlds(a_lds),
 	.busstate(a_state),
 	.longword(a_lw),
-	.nresetout(reset_out_p),
+	.nresetout(f_rst_out),
 	.fc(),
 	.nmi_ack_toggle(),
 	.fill_ena_zorro(1'b0),
@@ -644,7 +658,7 @@ ap040_pipe_tg68k_compat #(
 	.cache_ramaddr(),
 
 	.cacr_out(a_cacr),
-	.vbr_out(vbr_p),
+	.vbr_out(f_vbr),
 	.debug_busy(),
 	.debug_fault(),
 	.debug_halted(),
@@ -682,17 +696,18 @@ ap040_island #(
 ) cpu_inst_p (
 	.clk_cpu(clk_cpu),
 	.clk(clk),
-	.nreset(reset),
+	//.nreset(reset),
+	.nreset(reset & cpu040_sel),   // held in reset while TG68K is selected
 	.clkena_in(~cpu_req | bus_done | bus_berr),
 	.berr(bus_berr),
 	.data_in(a_din),
-	.addr_out(cpu_addr_p),
-	.data_write(cpu_dout_p),
-	.nwr(wr_p),
-	.nuds(uds_p),
-	.nlds(lds_p),
-	.busstate(cpustate_p),
-	.longword(longword),
+	.addr_out(f_addr),
+	.data_write(f_dout),
+	.nwr(f_wr),
+	.nuds(f_uds),
+	.nlds(f_lds),
+	.busstate(f_state),
+	.longword(f_lw),
 	.ipl(cpu_ipl),
 	.snoop_stb(snp_stb),
 	.snoop_addr({11'd0, snp_addr, 1'b0}),
@@ -709,12 +724,60 @@ ap040_island #(
 	.fp_wdata(fp_wdata),
 	.fp_rdata(fp_rdata),
 	.fp_ack(fp_ack),
-	.nresetout(reset_out_p),
+	.nresetout(f_rst_out),
 	.cacr_out(a_cacr),
-	.vbr_out(vbr_p),
+	.vbr_out(f_vbr),
 	.cache_maint(a_maint)
 );
 end
+
+// TG68K, as in g_tg68k, for the 68020 setting
+wire [15:0] t_dout;
+wire [31:0] t_addr;
+wire  [1:0] t_state;
+wire  [3:0] t_cacr;
+wire [31:0] t_vbr;
+wire        t_wr, t_uds, t_lds, t_rst_out, t_lw;
+TG68KdotC_Kernel
+#(
+	.sr_read(2),
+	.vbr_stackframe(2),
+	.extaddr_mode(2),
+	.mul_mode(2),
+	.div_mode(2),
+	.bitfield(2)
+)
+tg68k_inst
+(
+	.clk(clk),
+	.nreset(reset & ~cpu040_sel),   // held in reset while the 68040 is selected
+	.clkena_in(~cpu_req | chipready | ramready | fastchip_ready | ext_ready),
+	.data_in(cpu_din),
+	.ipl(cpu_ipl),
+	.ipl_autovector(1),
+	.regin_out(),
+	.addr_out(t_addr),
+	.data_write(t_dout),
+	.nwr(t_wr),
+	.nuds(t_uds),
+	.nlds(t_lds),
+	.nresetout(t_rst_out),
+	.longword(t_lw),
+	.cpu(cpucfg),
+	.busstate(t_state),
+	.cacr_out(t_cacr),
+	.vbr_out(t_vbr)
+);
+assign cpu_addr_p  = cpu040_sel ? f_addr    : t_addr;
+assign cpu_dout_p  = cpu040_sel ? f_dout    : t_dout;
+assign cpustate_p  = cpu040_sel ? f_state   : t_state;
+assign cacr_p      = cpu040_sel ? f_cacr    : t_cacr;
+assign vbr_p       = cpu040_sel ? f_vbr     : t_vbr;
+assign wr_p        = cpu040_sel ? f_wr      : t_wr;
+assign uds_p       = cpu040_sel ? f_uds     : t_uds;
+assign lds_p       = cpu040_sel ? f_lds     : t_lds;
+assign reset_out_p = cpu040_sel ? f_rst_out : t_rst_out;
+assign longword    = cpu040_sel ? f_lw      : t_lw;
 end endgenerate
 
 //TG68KdotC_Kernel
