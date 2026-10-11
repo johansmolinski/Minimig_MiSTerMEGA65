@@ -28,6 +28,16 @@
 // The bus never answers with an error here: a timeout (the wrapper's       //
 // watchdog) completes the access with all ones, as the 68020 path does,   //
 // except for a table walk, which gets walker_berr.                         //
+//                                                                          //
+// FASTRAM = 1: the Fast RAM port. An entry for the Zorro II or Zorro III   //
+// RAM that fits one aligned long (and every line fill: the core's fill     //
+// channel, which serves exactly those windows) goes to the SDRAM           //
+// controller as one 32-bit access or one 16-byte line read (fp_*, toggle   //
+// handshake, sdram_ctrl.v) instead of through the 16-bit adapter. Fills    //
+// queue like everything else, so a fill never overtakes a buffered write.  //
+// The answer to a fill is the whole line (128 bits, held like the read     //
+// data). Everything else, misaligned accesses to Fast RAM included, takes  //
+// the adapter as before.                                                   //
 //--------------------------------------------------------------------------//
 
 `include "ap040_defs.svh"
@@ -45,7 +55,9 @@ module ap040_island
 	parameter BTFN        = 0,
 	parameter LDX         = 0,
 	// 1: writes are acknowledged when queued (see above); 0: when done
-	parameter WRITE_BUF   = 0
+	parameter WRITE_BUF   = 0,
+	// 1: Fast RAM accesses and line fills through the fp_* port (see above)
+	parameter FASTRAM     = 0
 )
 (
 	input             clk_cpu,
@@ -70,6 +82,19 @@ module ap040_island
 	input             cache_z2_ena,
 	input       [7:0] cache_z3_base0,
 	input             cache_z3_ena0,
+	input             cache_rom_ena,  // the core caches the Kickstart ROM
+	input             cache_slow_ena, // the core caches the Slow RAM
+
+	// the Fast RAM port (FASTRAM = 1), toggle handshake; the controller's clock is
+	// 4x this one from the same MMCM, so both directions are synchronous paths
+	output reg        fp_req,
+	output reg        fp_we,
+	output reg        fp_line,
+	output reg [24:2] fp_addr,      // SDRAM long address (bank 24:23)
+	output reg  [3:0] fp_be,        // [3] = the byte at the long's address
+	output reg [31:0] fp_wdata,
+	input     [127:0] fp_rdata,
+	input             fp_ack,
 
 	output reg        nresetout,
 	output reg [31:0] cacr_out,
@@ -87,11 +112,11 @@ wire c_nreset = c_rst_s[1];
 (* ASYNC_REG = "TRUE" *) reg [2:0] c_ipl_s0, c_ipl_s1;
 (* ASYNC_REG = "TRUE" *) reg [1:0] c_ack_s;
 (* ASYNC_REG = "TRUE" *) reg [1:0] c_snp_s;
-(* ASYNC_REG = "TRUE" *) reg [9:0] c_win_s0, c_win_s1;
+(* ASYNC_REG = "TRUE" *) reg [11:0] c_win_s0, c_win_s1;
 reg        c_ack_p, c_snp_p;
 always @(posedge clk_cpu) begin
 	c_ipl_s0 <= ipl;            c_ipl_s1 <= c_ipl_s0;
-	c_win_s0 <= {cache_z2_ena, cache_z3_ena0, cache_z3_base0};
+	c_win_s0 <= {cache_rom_ena, cache_slow_ena, cache_z2_ena, cache_z3_ena0, cache_z3_base0};
 	c_win_s1 <= c_win_s0;
 end
 
@@ -107,9 +132,13 @@ reg         wk_ack, wk_berr;
 reg  [31:0] wk_data;
 wire [31:0] c_cacr, c_vbr;
 wire        c_resetout, c_maint;
+wire        f_req;                        // the fill channel (FASTRAM = 1)
+wire [31:4] f_addr;
+reg         f_ack;                        // held until the core drops f_req
+reg [127:0] f_data;
 
-// the request queue: 8 entries of {answer, walk, write, instr, size, fc, addr, wdata}
-localparam QW = 1 + 1 + 1 + 1 + 2 + 3 + 32 + 32;
+// the request queue: 8 entries of {answer, walk, fill, write, instr, size, fc, addr, wdata}
+localparam QW = 1 + 1 + 1 + 1 + 1 + 2 + 3 + 32 + 32;
 reg  [QW-1:0] q_mem [0:7];
 reg     [3:0] c_wp, c_wpg;                // write pointer, binary and Gray
 (* ASYNC_REG = "TRUE" *) reg [3:0] c_rpg_s0, c_rpg_s1;   // the bus side's read pointer (Gray)
@@ -118,22 +147,24 @@ function [3:0] bin2gray(input [3:0] b); bin2gray = b ^ (b >> 1); endfunction
 wire    [3:0] c_wp1  = c_wp + 4'd1;
 wire          c_full = (bin2gray(c_wp) == {~c_rpg_s1[3:2], c_rpg_s1[1:0]});
 
-reg         c_busy, c_walk;               // waiting for a read's answer
+reg         c_busy, c_walk, c_fill;       // waiting for a read's answer
 wire        b_ack_t;                      // bus side: toggles once per answer
-wire [31:0] b_rdata;
+wire [127:0] b_rdata;                     // a line for a fill, else bits 31:0
 wire        b_err;
 reg         c_snp_stb;
 reg  [31:0] c_snp_addr;
 wire        b_snp_t;
 wire [31:0] b_snp_addr;
 
-// a request to queue: the walker first. An entry wants an answer unless it is a
-// write and WRITE_BUF is set; then it is acknowledged when queued.
+// a request to queue: the walker first, then a fill. An entry wants an answer
+// unless it is a write and WRITE_BUF is set; then it is acknowledged when queued.
 wire        n_walk  = wk_req;
-wire        n_write = n_walk ? wk_we : m_write;
+wire        n_fill  = !wk_req && f_req && FASTRAM != 0;
+wire        n_write = n_walk ? wk_we : !n_fill && m_write;
 wire        n_ans   = !(n_write && WRITE_BUF != 0);
-wire [QW-1:0] n_ent = n_walk ? {n_ans, 1'b1, wk_we, 1'b0, `AP040_SZ_L, 3'd5, wk_addr, wk_wdat}
-                             : {n_ans, 1'b0, m_write, m_instr, m_size, m_fc, m_addr, m_wdata};
+wire [QW-1:0] n_ent = n_walk ? {n_ans, 1'b1, 1'b0, wk_we, 1'b0, `AP040_SZ_L, 3'd5, wk_addr, wk_wdat}
+                    : n_fill ? {1'b1, 1'b0, 1'b1, 1'b0, 1'b0, `AP040_SZ_L, 3'd5, f_addr, 4'd0, 32'd0}
+                             : {n_ans, 1'b0, 1'b0, m_write, m_instr, m_size, m_fc, m_addr, m_wdata};
 
 always @(posedge clk_cpu) begin
 	c_ack_s  <= {c_ack_s[0], b_ack_t};
@@ -143,6 +174,8 @@ always @(posedge clk_cpu) begin
 	if (!c_nreset) begin
 		c_busy  <= 0;
 		c_walk  <= 0;
+		c_fill  <= 0;
+		f_ack   <= 0;
 		c_wp    <= 0;
 		c_wpg   <= 0;
 		c_ack_p <= c_ack_s[1];
@@ -159,6 +192,7 @@ always @(posedge clk_cpu) begin
 		c_snp_stb <= 0;
 		c_ack_p   <= c_ack_s[1];
 		c_snp_p   <= c_snp_s[1];
+		if (!f_req) f_ack <= 0;                // the core has taken its line
 		if (c_snp_s[1] != c_snp_p) begin
 			c_snp_stb  <= 1;
 			c_snp_addr <= b_snp_addr;    // held by the bus side since its toggle
@@ -167,25 +201,31 @@ always @(posedge clk_cpu) begin
 			if (c_ack_s[1] != c_ack_p) begin
 				c_busy <= 0;
 				if (c_walk) begin
-					wk_data <= b_rdata;
+					wk_data <= b_rdata[31:0];
 					wk_ack  <= ~b_err;
 					wk_berr <= b_err;
 				end
+				else if (c_fill) begin
+					f_data  <= b_rdata;
+					f_ack   <= 1;
+				end
 				else begin
-					m_rdata <= b_rdata;
+					m_rdata <= b_rdata[31:0];
 					m_ack   <= 1;
 				end
 			end
 		end
 		// a new request; not in the clock of an answer, whose requester only
 		// drops its request at the edge that consumes the answer
-		else if (!m_ack && !wk_ack && !wk_berr && (wk_req || m_req) && !c_full) begin
+		else if (!m_ack && !wk_ack && !wk_berr && !f_ack &&
+		         (wk_req || n_fill || m_req) && !c_full) begin
 			q_mem[c_wp[2:0]] <= n_ent;
 			c_wp  <= c_wp1;
 			c_wpg <= bin2gray(c_wp1);
 			if (n_ans) begin
 				c_busy <= 1;
 				c_walk <= n_walk;
+				c_fill <= n_fill;
 			end
 			else if (n_walk) wk_ack <= 1;          // a queued write is done for the core
 			else             m_ack  <= 1;
@@ -198,7 +238,7 @@ ap040_pipe_tg68k_compat #(
 	.AP040_HAS_FPU(1),
 	.AP040_ENABLE_CACHE(1),
 	.AP040_POST_STORES(POST_STORES),
-	.AP040_FILL_CHANNEL(0),
+	.AP040_FILL_CHANNEL(FASTRAM != 0),
 	.AP040_BUS16(0),
 	.AP040_IFP(1),
 	.AP040_STORE_BUF(STORE_BUF),
@@ -220,6 +260,8 @@ ap040_pipe_tg68k_compat #(
 	.cache_z3_ena0(c_win_s1[8]),
 	.cache_z3_base1(4'd0),
 	.cache_z3_ena1(1'b0),
+	.cache_rom_ena(c_win_s1[11]),
+	.cache_slow_ena(c_win_s1[10]),
 	.data_in(16'd0),
 	.ipl(c_ipl_s1),
 	.ipl_autovector(1'b1),
@@ -235,12 +277,12 @@ ap040_pipe_tg68k_compat #(
 	.nresetout(c_resetout),
 	.fc(),
 	.nmi_ack_toggle(),
-	.fill_ena_zorro(1'b0),
+	.fill_ena_zorro(FASTRAM != 0),
 	.fill_ena_chip(1'b0),
-	.fill_req(),
-	.fill_addr(),
-	.fill_data(128'd0),
-	.fill_ack(1'b0),
+	.fill_req(f_req),
+	.fill_addr(f_addr),
+	.fill_data(f_data),
+	.fill_ack(f_ack),
 	.fill_err(1'b0),
 	.cache_maint_req(c_maint),
 	.cache_maint_ic(),
@@ -303,12 +345,14 @@ end
 reg         b_req;
 reg         b_ans;                        // the entry in progress wants an answer
 reg         b_walk;
+reg         b_fill;                       // the entry is a line fill
+reg         b_fp;                         // the entry is on the Fast RAM port
 reg         r_write, r_instr;
 reg   [1:0] r_size;
 reg  [31:0] r_addr, r_wdata;
 reg   [2:0] r_fc;
 reg         b_ack_tr;
-reg  [31:0] b_rdata_r;
+reg [127:0] b_rdata_r;
 reg         b_err_r;
 reg         b_snp_tr;
 reg         b_snp_p;
@@ -318,6 +362,30 @@ wire [31:0] a_rdata;
 wire  [3:0] b_rp1   = b_rp + 4'd1;
 wire        b_empty = (b_rpg == b_wpg_s1);
 wire [QW-1:0] b_ent = q_mem[b_rp[2:0]];
+initial fp_req = 1'b0;    // never reset: it follows the controller's fp_ack
+
+// the Fast RAM port's view of the next entry: the windows are cpu_wrapper's
+// autoconfig state (this clock), the SDRAM address is main.vhd's fram_addr_o map
+// (Zorro II: bank 1, [22:1]; Zorro III: banks 2/3, [23:1])
+wire        e_fill = b_ent[QW-3];
+wire  [1:0] e_size = b_ent[QW-6:QW-7];
+wire [31:0] e_addr = b_ent[63:32];
+wire [31:0] e_wdat = b_ent[31:0];
+wire        e_z2   = cache_z2_ena && !e_addr[31:24] && (e_addr[23] ^ |e_addr[22:21]);
+wire        e_z3   = cache_z3_ena0 && (e_addr[31:24] == cache_z3_base0);
+wire        e_fit  = (e_size == `AP040_SZ_B) ||
+                     (e_size == `AP040_SZ_W && e_addr[1:0] != 2'b11) ||
+                     (e_size == `AP040_SZ_L && e_addr[1:0] == 2'b00);
+wire        e_fp   = FASTRAM != 0 && (e_fill || ((e_z2 || e_z3) && e_fit));
+wire  [3:0] e_be   = (e_size == `AP040_SZ_B) ? (4'b1000 >> e_addr[1:0]) :
+                     (e_size == `AP040_SZ_W) ? (4'b1100 >> e_addr[1:0]) : 4'b1111;
+wire [31:0] e_wpos = (e_size == `AP040_SZ_B) ? {4{e_wdat[7:0]}} :
+                     (e_size == `AP040_SZ_W) ? {e_wdat[15:0] >> (8 * e_addr[0]), e_wdat[15:0] << (8 * e_addr[0])} :
+                                               e_wdat;
+// a single read's answer, right-aligned by size like the adapter's
+wire [31:0] f_long = fp_rdata[127 - 32 * r_addr[3:2] -: 32];
+wire [31:0] f_rd   = (r_size == `AP040_SZ_B) ? {24'd0, f_long[31 - 8 * r_addr[1:0] -: 8]} :
+                     (r_size == `AP040_SZ_W) ? {16'd0, f_long[31 - 8 * r_addr[1:0] -: 16]} : f_long;
 
 always @(posedge clk) begin
 	b_lvl_s0 <= {c_cacr_r[31], c_cacr_r[15], c_vbr_r, c_resetout_r, c_maint_r, 30'd0};
@@ -333,6 +401,7 @@ always @(posedge clk) begin
 	b_wpg_s1 <= b_wpg_s0;
 	if (!nreset) begin
 		b_req    <= 0;
+		b_fp     <= 0;
 		b_rp     <= 0;
 		b_rpg    <= 0;
 		b_ack_tr <= 0;
@@ -350,22 +419,38 @@ always @(posedge clk) begin
 			b_snp_tr     <= ~b_snp_tr;
 			b_snp_addr_r <= snoop_addr;
 		end
-		if (!b_req && !b_empty) begin
+		// (a Fast RAM access still in the controller after a reset is let finish)
+		if (!b_req && !b_fp && fp_ack == fp_req && !b_empty) begin
 			// the next entry; it was written before the pointer that shows it
-			{b_ans, b_walk, r_write, r_instr, r_size, r_fc, r_addr, r_wdata} <= b_ent;
+			{b_ans, b_walk, b_fill, r_write, r_instr, r_size, r_fc, r_addr, r_wdata} <= b_ent;
 			b_rp  <= b_rp1;
 			b_rpg <= bin2gray(b_rp1);
-			b_req <= 1;
+			if (e_fp) begin
+				b_fp     <= 1;
+				fp_req   <= ~fp_req;
+				fp_we    <= b_ent[QW-4];
+				fp_line  <= e_fill;
+				fp_addr  <= e_z3 ? {1'b1, e_addr[23:2]} : {2'b01, e_addr[22:2]};
+				fp_be    <= e_be;
+				fp_wdata <= e_wpos;
+			end
+			else b_req <= 1;
+		end
+		else if (b_fp && fp_ack == fp_req) begin
+			b_fp      <= 0;
+			b_rdata_r <= b_fill ? fp_rdata : {96'd0, f_rd};
+			b_err_r   <= 0;
+			if (b_ans) b_ack_tr <= ~b_ack_tr;
 		end
 		else if (b_req && a_ack) begin
 			b_req     <= 0;
-			b_rdata_r <= a_rdata;
+			b_rdata_r <= {96'd0, a_rdata};
 			b_err_r   <= 0;
 			if (b_ans) b_ack_tr <= ~b_ack_tr;
 		end
 		else if (b_req && berr) begin
 			b_req     <= 0;
-			b_rdata_r <= 32'hFFFFFFFF;
+			b_rdata_r <= {96'd0, 32'hFFFFFFFF};
 			b_err_r   <= b_walk;
 			if (b_ans) b_ack_tr <= ~b_ack_tr;
 		end

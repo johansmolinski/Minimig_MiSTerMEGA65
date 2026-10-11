@@ -88,7 +88,10 @@ module cpu_wrapper
 	parameter CPU040 = 0,
 	// Megamiga (cpu040, CPU040 = 2 only): 1 = the island's write buffer, 2 = also
 	// the AP68040's own speed-ups (they lengthen its paths to ~27 ns)
-	parameter CPU040_FAST = 0
+	parameter CPU040_FAST = 0,
+	// Megamiga (cpu040, CPU040 = 2 only): 1 = the island's Fast RAM port (fp_*) for
+	// Zorro II/III RAM accesses and the core's line fills; cpu_cache_new is then off
+	parameter CPU040_FASTRAM = 0
 )
 (
 	input             reset,
@@ -153,7 +156,19 @@ module cpu_wrapper
 
 	// Megamiga, October 2026 (CPU040): a chipset write to Chip RAM, this clock
 	input             snoop_stb,
-	input      [20:1] snoop_addr
+	input      [20:1] snoop_addr,
+	// Megamiga, October 2026 (CPU040): 512 KB Slow RAM at $C00000 (the 68040 caches it)
+	input             slowram_ena,
+	// Megamiga, October 2026 (CPU040 = 2, CPU040_FASTRAM = 1): the 68040's Fast RAM port
+	// into sdram_ctrl (see ap040_island.v); fp_addr is the SDRAM long address
+	output            fp_req,
+	output            fp_we,
+	output            fp_line,
+	output     [24:2] fp_addr,
+	output      [3:0] fp_be,
+	output     [31:0] fp_wdata,
+	input     [127:0] fp_rdata,
+	input             fp_ack
 );
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the SDRAM/DDR3 cpu port is
@@ -444,6 +459,7 @@ cpu_inst_p
 	.vbr_out(vbr_p)
 );
 assign ram_hold = 1'b0;
+assign {fp_req, fp_we, fp_line, fp_addr, fp_be, fp_wdata} = 0;
 end
 else begin : g_ap040
 // The AP68040 pipelined core with TG68K's bus (AP040_BUS16 = 1: its
@@ -504,7 +520,9 @@ end
 
 // 040 CACR: bit 15 = instruction cache. Minimig's cpu_cache_new takes bit 0 =
 // enable and clears on a rising bit 3: CINV/CPUSH clear it as well.
-assign cacr_p     = {a_maint, 2'b00, a_cacr[15]};
+// With the Fast RAM port that cache is off: the port bypasses it, so it would go stale.
+//assign cacr_p     = {a_maint, 2'b00, a_cacr[15]};
+assign cacr_p     = {a_maint, 2'b00, a_cacr[15] & ~(CPU040 == 2 && CPU040_FASTRAM != 0)};
 
 if (CPU040 == 1) begin : g_bus
 // CPU040 = 1: the core on the bus clock
@@ -573,6 +591,8 @@ ap040_pipe_tg68k_compat #(
 	.cache_z3_ena0(z3_configured),
 	.cache_z3_base1(4'd0),
 	.cache_z3_ena1(1'b0),
+	.cache_rom_ena(1'b1),
+	.cache_slow_ena(slowram_ena),
 	.data_in(a_din),
 	.ipl(cpu_ipl),
 	.ipl_autovector(1'b1),
@@ -637,6 +657,7 @@ ap040_pipe_tg68k_compat #(
 	.m_ack(1'b0),
 	.m_rdata(32'd0)
 );
+assign {fp_req, fp_we, fp_line, fp_addr, fp_be, fp_wdata} = 0;
 end
 else begin : g_island
 // CPU040 = 2: the core on its own clock (clk_cpu), behind ap040_island's request
@@ -647,7 +668,8 @@ ap040_island #(
 	.POST_STORES(CPU040_FAST >= 2), .STORE_BUF(CPU040_FAST >= 2), .FWD(CPU040_FAST >= 2),
 	.RAS(CPU040_FAST >= 2), .PRECISE(CPU040_FAST >= 2), .SB_MMU(CPU040_FAST >= 2),
 	.BTFN(CPU040_FAST >= 2), .LDX(CPU040_FAST >= 2),
-	.WRITE_BUF(CPU040_FAST >= 1)
+	.WRITE_BUF(CPU040_FAST >= 1),
+	.FASTRAM(CPU040_FASTRAM)
 ) cpu_inst_p (
 	.clk_cpu(clk_cpu),
 	.clk(clk),
@@ -668,6 +690,16 @@ ap040_island #(
 	.cache_z2_ena(z2ram_ena),
 	.cache_z3_base0(z3_base),
 	.cache_z3_ena0(z3_configured),
+	.cache_rom_ena(1'b1),
+	.cache_slow_ena(slowram_ena),
+	.fp_req(fp_req),
+	.fp_we(fp_we),
+	.fp_line(fp_line),
+	.fp_addr(fp_addr),
+	.fp_be(fp_be),
+	.fp_wdata(fp_wdata),
+	.fp_rdata(fp_rdata),
+	.fp_ack(fp_ack),
 	.nresetout(reset_out_p),
 	.cacr_out(a_cacr),
 	.vbr_out(vbr_p),

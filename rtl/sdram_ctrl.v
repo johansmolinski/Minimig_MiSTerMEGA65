@@ -87,10 +87,30 @@ module sdram_ctrl
 	input             flpU,
 	input      [15:0] flpWR,
 	output reg [15:0] flpRD,
-	output reg        flpAck
+	output reg        flpAck,
+	// Megamiga, October 2026 (branch cpu040): the 68040's Fast RAM port, 32 bits wide,
+	// without the 16-bit CPU bus and its handshake. fpReq toggles to request, fpAck toggles
+	// back when the access is done. A write is one slot: one WRITE per 16-bit half that has
+	// a byte enable (fpBE[3] = the byte at the long's address, bits 31:24), the second one
+	// into the row the first left open. A read is one burst of
+	// four words per slot: the aligned 8 bytes holding the long, or with fpLine the whole
+	// 16-byte line in two slots; fpRD holds the line as the 68040's fill channel wants it
+	// (the word at line offset 0 in bits 127:112), a single read in its half of it. It does
+	// not go through cpu_cache_new: the 68040 has its own caches (and cpu_wrapper keeps
+	// that cache off while this port is in use). Priority: after a CPU write, before a CPU
+	// read, and never while a refresh is due.
+	input             fpReq,
+	input             fpWE,
+	input             fpLine,
+	input      [24:2] fpAddr,
+	input       [3:0] fpBE,
+	input      [31:0] fpWR,
+	output reg [127:0] fpRD,
+	output reg        fpAck
 );
 
 initial flpAck = 1'b0;   // Megamiga: no initialiser on an output port in SystemVerilog mode
+initial fpAck  = 1'b0;
 
 
 reg [15:0] sd_data_out;
@@ -106,7 +126,9 @@ localparam [2:0]
 	CHIP = 1,
 	CPU_READCACHE = 2,
 	CPU_WRITECACHE = 3,
-	FLOPPY = 4;           // Megamiga: the floppy/IDE ROM port
+	FLOPPY = 4,           // Megamiga: the floppy/IDE ROM port
+	FP_READ = 5,          // Megamiga: the 68040's Fast RAM port
+	FP_WRITE = 6;
 
 // MiSTer2MEGA65 (Megamiga), October 2026: these registers were declared below
 // their first use (in the cpu_cache_new port map and in early always blocks).
@@ -302,6 +324,11 @@ always @ (posedge sysclk) begin
 	reg  [9:0] casaddr;
 	reg  [3:0] rcnt;
 	reg        flp_last;     // Megamiga: the previous slot went to the floppy port
+	reg        fp_done0;     // Megamiga: the 68040 port's first slot is done
+	reg        fp_fin;       // Megamiga: this slot finishes the 68040 port's access
+	reg        fp_blk;       // Megamiga: which 8 bytes of the line this read slot gets
+	reg        fp_two;       // Megamiga: this write slot writes both halves of the long
+	reg [63:0] fp_sh;        // Megamiga: the read slot's four words
 	
 	sd_clk <= sdram_state[0];
 
@@ -320,6 +347,8 @@ always @ (posedge sysclk) begin
 		slot_type             <= IDLE;
 		casaddr               <= 0;
 		rcnt                  <= 0;
+		fp_done0              <= 0;    // Megamiga
+		fp_two                <= 0;
 		sd_dqm                <= 3;
 		sd_ba                 <= 0;
 		if(sdram_state == 0) begin
@@ -372,7 +401,8 @@ always @ (posedge sysclk) begin
 					chipWE       <= !chipRW;
 				end
 				// Megamiga: floppy/IDE ROM port (see the port list)
-				else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req))) begin
+				//else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req))) begin
+				else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req | (fpReq ^ fpAck)))) begin
 					slot_type    <= FLOPPY;
 					flp_last     <= 1;
 					{sd_ba,sd_addr,casaddr[8:0]} <= {2'b00, flpAddr};
@@ -392,6 +422,39 @@ always @ (posedge sysclk) begin
 					cas_sd_cas   <= 0;
 					write_ack    <= 1; // let the write buffer know we're about to write
 					datawr       <= writeDat;
+				end
+				// Megamiga: the 68040's Fast RAM port (see the port list)
+				else if((fpReq ^ fpAck) && ~&rcnt) begin
+					sd_ras       <= 0;
+					cas_sd_cas   <= 0;
+					fp_done0     <= 1;
+					fp_two       <= 0;
+					if(fpWE) begin
+						// the high half first, a half without byte enables not at all;
+						// both halves in one slot: a second WRITE into the open row two
+						// states after the first, which then leaves out its auto precharge
+						slot_type    <= FP_WRITE;
+						cas_sd_we    <= 0;
+						if(~fp_done0 & |fpBE[3:2]) begin
+							{sd_ba,sd_addr,casaddr[8:0]} <= {fpAddr, 1'b0};
+							cas_dqm  <= ~fpBE[3:2];
+							datawr   <= fpWR[31:16];
+							fp_fin   <= 1;
+							fp_two   <= |fpBE[1:0];
+						end
+						else begin
+							{sd_ba,sd_addr,casaddr[8:0]} <= {fpAddr, 1'b1};
+							cas_dqm  <= ~fpBE[1:0];
+							datawr   <= fpWR[15:0];
+							fp_fin   <= 1;
+						end
+					end
+					else begin
+						slot_type    <= FP_READ;
+						fp_blk       <= fpLine ? fp_done0 : fpAddr[3];
+						{sd_ba,sd_addr,casaddr[8:0]} <= {fpAddr[24:4], fpLine ? fp_done0 : fpAddr[3], 2'b00};
+						fp_fin       <= ~fpLine | fp_done0;
+					end
 				end
 				// request from read cache
 				else if(cache_req) begin
@@ -422,8 +485,42 @@ always @ (posedge sysclk) begin
 					sd_we        <= 0;
 				end
 				write_ack       <= 0; // indicate to write that it's safe to accept the next write
+				// Megamiga: a 68040 port write is done once its last half has its CAS
+				if(slot_type == FP_WRITE && fp_two) sd_addr[10] <= 0;  // the row stays open
+				if(slot_type == FP_WRITE && fp_fin && !fp_two) begin
+					fp_done0     <= 0;
+					fpAck        <= ~fpAck;
+				end
+			end
+
+			// Megamiga: the second WRITE of a 68040 port long (fp_two), with auto precharge
+			4 : if(slot_type == FP_WRITE && fp_two) begin
+				sd_addr         <= {~fpBE[1:0], 1'b1, casaddr[9:1], 1'b1};
+				sd_cas          <= 0;
+				sd_we           <= 0;
+				sd_data_out     <= fpWR[15:0];
+				sd_data_oe      <= 1;
+				sd_dqm          <= ~fpBE[1:0];
+				fp_done0        <= 0;
+				fpAck           <= ~fpAck;
 			end
 		endcase
+
+		// Megamiga: the 68040 port's read slot takes the burst where the cache fill does
+		// (sdata_reg holds word n at state 8 + 2n), then answers after the last slot
+		if(slot_type == FP_READ) begin
+			case(sdram_state)
+				8, 10, 12, 14: fp_sh <= {fp_sh[47:0], sdata_reg};
+				15: begin
+					if(fp_blk) fpRD[63:0]   <= fp_sh;
+					else       fpRD[127:64] <= fp_sh;
+					if(fp_fin) begin
+						fp_done0 <= 0;
+						fpAck    <= ~fpAck;
+					end
+				end
+			endcase
+		end
 	end
 end
 

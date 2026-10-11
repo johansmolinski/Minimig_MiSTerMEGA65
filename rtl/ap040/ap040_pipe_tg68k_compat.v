@@ -100,6 +100,11 @@ module ap040_pipe_tg68k_compat
 	input         cache_z3_ena0,
 	input   [3:0] cache_z3_base1,
 	input         cache_z3_ena1,
+	// Megamiga, October 2026: the motherboard windows nothing but the CPU writes, the
+	// Kickstart ROM ($F80000-$FFFFFF) and the 512 KB Slow RAM ($C00000-$C7FFFF):
+	// cacheable for both banks like Fast RAM, but never served by the fill channel
+	input         cache_rom_ena,
+	input         cache_slow_ena,
 	input  [15:0] data_in,
 	input  [2:0]  ipl,
 	input         ipl_autovector,
@@ -646,11 +651,20 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	// the bypass out of simulation programs, which run at low addresses
 	// and would otherwise lose all I-cache coverage.
 	wire cache_chip = (mm_addr[31:21] == 11'd0);          // $000000-$1fffff
-	wire cache_win =
+	//wire cache_win =
+	//	((mm_addr[31:24] == cache_z3_base0) && cache_z3_ena0) ||
+	//	((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1) ||
+	//	(!mm_addr[31:24] && (mm_addr[23] ^ |mm_addr[22:21]) && cache_z2_ena) ||
+	//	cache_chip;
+	// Megamiga: the Zorro windows (the fill channel's) and the motherboard ones
+	wire cache_zwin =
 		((mm_addr[31:24] == cache_z3_base0) && cache_z3_ena0) ||
 		((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1) ||
-		(!mm_addr[31:24] && (mm_addr[23] ^ |mm_addr[22:21]) && cache_z2_ena) ||
-		cache_chip;
+		(!mm_addr[31:24] && (mm_addr[23] ^ |mm_addr[22:21]) && cache_z2_ena);
+	wire cache_mbwin =
+		((mm_addr[31:19] == {8'h00, 5'b11111}) && cache_rom_ena) ||
+		((mm_addr[31:19] == {8'h00, 5'b11000}) && cache_slow_ena);
+	wire cache_win = cache_zwin || cache_mbwin || cache_chip;
 	wire cache_allow = cache_allow_all | cache_win;
 	// (findings/copyback/plan.md) copyback only in the DDR3 board's window:
 	// posting into the SDRAM corrupted data on the board (stage 4), and
@@ -682,7 +696,9 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	reg  [7:0] w_z3b0;   // Megamiga: [7:0], see cache_z3_base0
 	reg  [3:0] w_z3b1;
 	reg        w_z3e0, w_z3e1, w_z2e;
+	reg        w_rom, w_slow;   // Megamiga
 	always @(posedge clk) begin
+		w_rom  <= cache_rom_ena; w_slow <= cache_slow_ena;
 		w_z3b0 <= cache_z3_base0; w_z3e0 <= cache_z3_ena0;
 		w_z3b1 <= cache_z3_base1; w_z3e1 <= cache_z3_ena1;
 		w_z2e  <= cache_z2_ena;
@@ -695,7 +711,9 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	wire ia_win   =
 		((ifp_pa[31:24] == w_z3b0) && w_z3e0) ||
 		((ifp_pa[31:28] == w_z3b1) && w_z3e1) ||
-		(!ifp_pa[31:24] && (ifp_pa[23] ^ |ifp_pa[22:21]) && w_z2e);
+		(!ifp_pa[31:24] && (ifp_pa[23] ^ |ifp_pa[22:21]) && w_z2e) ||
+		((ifp_pa[31:19] == {8'h00, 5'b11111}) && w_rom) ||     // Megamiga
+		((ifp_pa[31:19] == {8'h00, 5'b11000}) && w_slow);
 	wire ia_ok    = ifp_ie_q && ifp_tok && !ifp_tci &&
 	                (cache_allow_all || (ia_win && !ia_chip));
 	wire ifp_thit;
@@ -740,6 +758,8 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 		((dfp_pa[31:24] == w_z3b0) && w_z3e0) ||
 		((dfp_pa[31:28] == w_z3b1) && w_z3e1) ||
 		(!dfp_pa[31:24] && (dfp_pa[23] ^ |dfp_pa[22:21]) && w_z2e) ||
+		((dfp_pa[31:19] == {8'h00, 5'b11111}) && w_rom) ||     // Megamiga
+		((dfp_pa[31:19] == {8'h00, 5'b11000}) && w_slow) ||
 		(dfp_pa[31:21] == 11'd0);
 	wire dfp_thit;
 	assign dfp_hit = IFP_ON && dfp_ok_q && dfp_tok && !dfp_tci &&
@@ -759,7 +779,8 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 		.ce(ce_core),
 		// the channel serves the cacheable windows the wrapper names;
 		// cache_allow_all (the benches) counts as the Zorro capability
-		.fill_ok((fill_ena_zorro & (cache_win & ~cache_chip | cache_allow_all)) |
+		//.fill_ok((fill_ena_zorro & (cache_win & ~cache_chip | cache_allow_all)) |
+		.fill_ok((fill_ena_zorro & (cache_zwin | cache_allow_all)) |
 		         (fill_ena_chip & cache_chip)),
 		.fill_req(fill_req),
 		.fill_addr(fill_addr),
