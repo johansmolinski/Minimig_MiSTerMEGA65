@@ -148,6 +148,8 @@ module cpu_wrapper
 
 	// MiSTer2MEGA65 (AExp fork), October 2026: RIPPLE-compatible IDE board
 	input             ide_ena,         // board present in the autoconfig chain
+	// Megamiga 0.7: the IDE board as the A600/A1200 Gayle instead ($DA0000, $DE1000)
+	input             gayle_ena,
 	// Megamiga, October 2026: the 16 MB Zorro III board (68020 only)
 	input             z3ena,
 	// Megamiga, October 2026: the network card (eth_card.vhd), also on ext_*
@@ -233,9 +235,16 @@ wire sel_eth        = eth_configured && !cpu_addr[31:24] && (cpu_addr[23:16] == 
 // Megamiga 0.6.1: + sel_shr, the shared folder memory at $DD4000-$DD5FFF (MiSTer's
 // shared memory for MiSTerFileSystem, sel_dd below), served by share_buf.vhd instead of
 // the always-ack of the chip bus
+// Megamiga 0.7: + sel_gayle, the same IDE board as the A600/A1200 Gayle: while
+// gayle_ena (both latched at reset) it is not autoconfig'd but answers at the Gayle
+// addresses, $DA0000-$DAFFFF (IDE and Gayle registers) and $DE1000-$DE1FFF (Gayle ID)
 //assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_eth) & ~ext_done;
+//assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_eth | sel_shr) & ~ext_done;
 wire sel_shr        = (cpu_addr[31:16] == 16'h00DD) && (cpu_addr[15:13] == 3'b010);
-assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_eth | sel_shr) & ~ext_done;
+reg       gayle_on = 1'b0;  // Megamiga 0.7: the IDE board is the Gayle
+wire sel_gayle      = gayle_on && !cpu_addr[31:24] &&
+                      ((cpu_addr[23:16] == 8'hDA) || (cpu_addr[23:12] == 12'hDE1));
+assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_gayle | sel_eth | sel_shr) & ~ext_done;
 assign ext_eth      = sel_eth;
 assign ext_shr      = sel_shr;
 reg ext_done;
@@ -919,7 +928,9 @@ always @(posedge clk) begin
 	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~(sel_ide & ext_done);
 	// Megamiga 0.6.1: + the shared folder memory
 	//chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth) & ext_done);
-	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth | sel_shr) & ext_done);
+	// Megamiga 0.7: + the Gayle
+	//chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth | sel_shr) & ext_done);
+	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_gayle | sel_eth | sel_shr) & ext_done);
 	cpu_ipl <= ipl_i;
 end
 
@@ -1168,7 +1179,10 @@ always @(posedge clk) begin : autoconfig_blk
 		//ac_toccata  <= 1; // MiSTer2MEGA65 (AExp): Toccata not ported, see above
 		ac_toccata  <= 0;
 		toccata_base <= 8'h00; // MiSTer2MEGA65 (AExp): give the (now never written) reg a defined value
-		ac_ide         <= ide_ena;
+		// Megamiga 0.7: the board is either autoconfig'd (RIPPLE) or the Gayle
+		//ac_ide         <= ide_ena;
+		ac_ide         <= ide_ena & ~gayle_ena;
+		gayle_on       <= ide_ena & gayle_ena;
 		ide_configured <= 0;
 		ide_base       <= 8'h00;
 		ac_eth         <= eth_ena;
