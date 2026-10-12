@@ -147,6 +147,8 @@ module cpu_wrapper
 	// Megamiga, October 2026: the network card (eth_card.vhd), also on ext_*
 	input             eth_ena,         // board present in the autoconfig chain
 	output            ext_eth,         // the ext_sel cycle is for the network card
+	// Megamiga 0.6.1: the shared folder memory $DD4000-$DD5FFF (share_buf.vhd), also on ext_*
+	output            ext_shr,         // the ext_sel cycle is for the shared folder memory
 	output            ext_sel,         // bus cycle to the configured board
 	input      [15:0] ext_dout,        // read data of the board
 	input             ext_ready,       // DTACK of the board
@@ -222,8 +224,14 @@ reg       ac_eth;          // Megamiga: the network card is being configured
 reg       eth_configured;  // Megamiga: the network card has its base address
 reg [7:0] eth_base;        // Megamiga: A23..A16 of the network card
 wire sel_eth        = eth_configured && !cpu_addr[31:24] && (cpu_addr[23:16] == eth_base);
-assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_eth) & ~ext_done;
+// Megamiga 0.6.1: + sel_shr, the shared folder memory at $DD4000-$DD5FFF (MiSTer's
+// shared memory for MiSTerFileSystem, sel_dd below), served by share_buf.vhd instead of
+// the always-ack of the chip bus
+//assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_eth) & ~ext_done;
+wire sel_shr        = (cpu_addr[31:16] == 16'h00DD) && (cpu_addr[15:13] == 3'b010);
+assign ext_sel      = cpu_req & ~sel_nmi_vector & (sel_ide | sel_eth | sel_shr) & ~ext_done;
 assign ext_eth      = sel_eth;
+assign ext_shr      = sel_shr;
 reg ext_done;
 always @(posedge clk) ext_done <= (cpucfg[1:0] != 2'b00) & ext_sel & ext_ready;
 
@@ -894,7 +902,9 @@ always @(posedge clk) begin
 	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack;
 	// Megamiga, October 2026: + the network card
 	//chipreq <= cpu_req & ~ramsel & ~fastchip_selack & ~ext_sel & ~(sel_ide & ext_done);
-	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth) & ext_done);
+	// Megamiga 0.6.1: + the shared folder memory
+	//chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth) & ext_done);
+	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth | sel_shr) & ext_done);
 	cpu_ipl <= ipl_i;
 end
 
