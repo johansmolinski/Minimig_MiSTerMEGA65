@@ -111,6 +111,12 @@ module cpu_wrapper
 	input       [2:0] fastramcfg,
 	input       [2:0] cachecfg,
 	input             bootrom,
+	// Megamiga, October 2026: the Action Replay III cartridge (minimig.v / ar3.v).
+	// cart_ar3: it is plugged in, so $400000-$47FFFF belongs to it and not to the
+	// Zorro II RAM decode (the core announces a 2 MB board then). cart_ovl: its chip
+	// RAM overlay is on, so chip RAM reads must take the chip bus, not the fast path.
+	input             cart_ar3,
+	input             cart_ovl,
 
 	output reg [23:1] chip_addr,
 	input      [15:0] chip_dout,
@@ -240,7 +246,13 @@ always @(posedge clk) nmi_addr <= vbr + 32'h7c;
 
 wire sel_z3ram0 = (cpu_addr[31:27] == z3ram_base0) && z3ram_ena0;
 wire sel_z3ram1 = (cpu_addr[31:28] == z3ram_base1) && z3ram_ena1;
-wire sel_z2ram  = !cpu_addr[31:24] && (cpu_addr[23] ^ |cpu_addr[22:21]) && z2ram_ena; // addr[23:21] = 1..4
+//wire sel_z2ram  = !cpu_addr[31:24] && (cpu_addr[23] ^ |cpu_addr[22:21]) && z2ram_ena; // addr[23:21] = 1..4
+// Megamiga, October 2026: with the Action Replay III plugged in, the board is 2 MB
+// ($200000-$3FFFFF), which keeps the cartridge window $400000-$47FFFF off the fast path.
+// Decoded from addr[23:21] + cart_ar3 only (one input more than upstream): carving just the
+// window out (a 5-bit compare) put a LUT level on the TG68K -> sdram_ctrl paths.
+wire sel_z2ram  = !cpu_addr[31:24] && z2ram_ena &&
+                  (cart_ar3 ? (cpu_addr[23:21] == 3'b001) : (cpu_addr[23] ^ |cpu_addr[22:21])); // addr[23:21] = 1..4 (AR3: 1)
 // Megamiga, October 2026: + the 16 MB Zorro III board (base A31..A24 from autoconfig)
 wire sel_z3ram16 = (cpu_addr[31:24] == z3_base) && z3_configured;
 //wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram;
@@ -873,7 +885,10 @@ fx68k cpu_inst_o
 // Megamiga, October 2026: declared above the CPU generate block (CPU040)
 //wire cpu_req = (cpustate != 1);
 
-wire cchip = turbochip_d & (!cpustate | dcache_d);
+//wire cchip = turbochip_d & (!cpustate | dcache_d);
+// Megamiga, October 2026: no chip RAM fast path while the Action Replay III overlay is on
+// (Minimig 1.x switched turbo off the same way while "int7 | ovr")
+wire cchip = turbochip_d & (!cpustate | dcache_d) & ~cart_ovl;
 wire ckick = turbokick_d & (!cpustate | dcache_d);
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: turbo chipram/kickstart

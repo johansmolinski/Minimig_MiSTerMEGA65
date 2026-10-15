@@ -85,6 +85,12 @@ module minimig_m65
 	// Megamiga, October 2026: the network card's interrupt (INT2, level)
 	input         eth_irq,
 
+	// Megamiga, October 2026: freezer cartridges (see minimig.v)
+	input         cart_hrtmon,    // HRTmon cartridge plugged in
+	input         cart_ar3,       // Action Replay III plugged in (and its ROM loaded)
+	input         cart_freeze,    // the cartridge's freeze button (level)
+	output        cart_ovl,       // AR3 chip RAM overlay on (to cpu_wrapper)
+
 	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
 	// the MEGA65's real internal floppy as an Amiga drive unit (main.vhd /
 	// mega65.vhd drive the connector and condition the status levels; see the
@@ -297,6 +303,10 @@ minimig minimig_inst
 	.ide_fast      (             ),
 	.ide_ext_irq   (1'b0         ),
 	.eth_irq       (eth_irq      ),
+	.cart_hrtmon   (cart_hrtmon  ),
+	.cart_ar3      (cart_ar3     ),
+	.cart_freeze   (cart_freeze  ),
+	.cart_ovl      (cart_ovl     ),
 	.ide_req       (             ),
 	.ide_address   (5'b0         ),
 	.ide_write     (1'b0         ),

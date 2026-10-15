@@ -288,6 +288,16 @@ module minimig
 	input         ide_ext_irq,
 	// Megamiga, October 2026: the network card's interrupt (INT2, level)
 	input         eth_irq,
+	// Megamiga, October 2026: freezer cartridges. cart_hrtmon plugs in the HRTmon
+	// cartridge (cart.v, image loaded by the core at $A10000), cart_ar3 the Action
+	// Replay III (ar3.v, ROM in its own SDRAM bank); at most one is set. cart_freeze is
+	// the cartridge's freeze button (level, from the core: keyboard combo or menu).
+	// cart_ovl: the AR3 chip RAM overlay is on (cpu_wrapper keeps the 32-bit CPUs'
+	// chip RAM fast path off meanwhile, so their vector fetch sees the overlay).
+	input         cart_hrtmon,
+	input         cart_ar3,
+	input         cart_freeze,
+	output        cart_ovl,
 	output  [5:0] ide_req,
 	input   [4:0] ide_address,
 	input         ide_write,
@@ -312,6 +322,12 @@ wire [15:0] gary_data_out;	   //data out from memory bus multiplexer
 wire [15:0] gayle_data_out;	//Gayle data out
 wire [15:0] cia_data_out;	   //cia A+B data bus out
 wire [15:0] ar3_data_out;	   //Action Replay data out
+// Megamiga, October 2026: the two freezer cartridges (cart.v = HRTmon, ar3.v = Action Replay
+// III) and the bank steering of the AR3 (see the RAM1 bridge); ar3_data_out above is reused
+wire        hrt_int7, hrt_sel_cart, hrt_ovr;
+wire [15:0] hrt_data_out;
+wire        ar3_int7, ar3_selmem, ar3_ovr;
+wire [22:1] ram_address_br;
 
 //local signals for address bus
 wire [23:1] cpu_address_out;	//cpu address out
@@ -684,7 +700,11 @@ ciaa CIAA1
 	.kbd_mouse_data(kbd_mouse_data),
 	.kbd_ack(kbd_ack),
 	.freeze(freeze),
-	.hrtmon_en (memory_config[6])
+	// Megamiga, October 2026: the freeze button is cart_freeze (the core's key combo
+	// or menu line); the Amiga Help key must stay a key - on the MEGA65 it also opens
+	// the menu. ciaa.v's Help-key freeze is therefore disabled here.
+	//.hrtmon_en (memory_config[6])
+	.hrtmon_en (1'b0)
 );
 
 //instantiate cia B
@@ -791,10 +811,18 @@ minimig_sram_bridge RAM1
 	// outputs a 22-bit banked address [22:1]; connecting it to the 23-bit
 	// ram_address left bit 23 undriven ('z') in upstream. Tie it to 0
 	// explicitly so the MEGA65 wrapper sees a fully defined address bus.
-	.address(ram_address[22:1]),
+	//.address(ram_address[22:1]),
+	.address(ram_address_br[22:1]),   // Megamiga: see the AR3 bank below
 	.data(ram_data),
 	.ramdata_in(ramdata_in)
 );
+
+// Megamiga, October 2026: the Action Replay III answers at $400000-$47FFFF and, during
+// its overlay, at $000000-$07FFFF - neither address belongs to free memory in the 8 MB
+// chipset space ($400000 is where the bridge puts the slow RAM). Its bank is block
+// $280000-$2FFFFF (A22..A19 = 0101), next to the HRTmon bank $200000-$27FFFF that
+// $A00000 lands on by itself; the offset into the bank is the CPU address offset.
+assign ram_address[22:1] = ar3_selmem ? {4'b0101, ram_address_br[18:1]} : ram_address_br[22:1];
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: see comment above.
 assign ram_address[23] = 1'b0;
@@ -815,13 +843,51 @@ cart CART1
   .reg_data_in(custom_data_in),
   .dbr(dbr),
   .ovl(ovl),
-  .freeze(freeze),
-  .cart_data_out(cart_data_out),
-  .int7(int7),
-  .sel_cart(sel_cart),
-  .ovr(ovr),
+  // Megamiga, October 2026: plugged in only while cart_hrtmon; its outputs get the
+  // hrt_ prefix and are combined with the Action Replay III below.
+  //.freeze(freeze),
+  .freeze(cart_freeze & cart_hrtmon),
+  //.cart_data_out(cart_data_out),
+  //.int7(int7),
+  //.sel_cart(sel_cart),
+  //.ovr(ovr),
+  .cart_data_out(hrt_data_out),
+  .int7(hrt_int7),
+  .sel_cart(hrt_sel_cart),
+  .ovr(hrt_ovr),
   .cpuhlt(cpuhlt)
 );
+
+// Megamiga, October 2026: the Action Replay III (ar3.v) and the combination of the two
+// cartridges. At most one is plugged in (cart_hrtmon / cart_ar3 from the core).
+
+ar3 AR3
+(
+  .clk(clk),
+  .clk7_en(clk7_en),
+  .reset(!_cpu_reset),
+  .aron(cart_ar3),
+  .cpu_address_in(cpu_address_out),
+  ._cpu_as(_cpu_as),
+  .cpu_rd(cpu_rd),
+  .cpu_hwr(cpu_hwr),
+  .cpu_lwr(cpu_lwr),
+  .data_in(cpu_data_out),
+  .reg_address_in(reg_address),
+  .reg_data_in(custom_data_in),
+  .dbr(dbr),
+  .freeze(cart_freeze),
+  .data_out(ar3_data_out),
+  .int7(ar3_int7),
+  .selmem(ar3_selmem),
+  .ovr(ar3_ovr)
+);
+
+assign sel_cart      = (hrt_sel_cart & cart_hrtmon) | ar3_selmem;
+assign ovr           = (hrt_ovr & cart_hrtmon) | ar3_ovr;
+assign int7          = (hrt_int7 & cart_hrtmon) | ar3_int7;
+assign cart_data_out = (cart_hrtmon ? hrt_data_out : 16'h0000) | ar3_data_out;
+assign cart_ovl      = ar3_ovr;
 
 //level 7 interrupt for CPU
 assign _cpu_ipl = int7 ? 3'b000 : _iplx;	//m68k interrupt request

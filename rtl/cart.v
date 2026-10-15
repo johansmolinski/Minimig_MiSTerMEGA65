@@ -35,6 +35,7 @@
 // 2013-11-27  - initial version                                              //
 // 2014-09-27  - cleanup, clock enable added                                  //
 // 2015-05-03  - added custom registers mirror                                //
+// Megamiga (MEGA65), October 2026: freeze acknowledge without IACK cycle     //
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -67,12 +68,20 @@ module cart
 assign sel_cart = ~dbr && (cpu_address_in[23:19]==5'b1010_0) && (stealth | cpuhlt); // $A00000
    
 
+// Megamiga, October 2026: declared here, used by ovr (see below)
+reg l_int7=0;
+
 // latch VBR + NMI vector offset
 reg [31:0] nmi_vec_adr=0;
 always @ (posedge clk) if (clk7_en) nmi_vec_adr <= nmi_addr; // $7C = NMI vector offset
 
 // override decoding of NMI
-assign ovr = active && ~dbr && ~ovl && cpu_rd && (cpu_address_in[23:2] == nmi_vec_adr[23:2]);
+//assign ovr = active && ~dbr && ~ovl && cpu_rd && (cpu_address_in[23:2] == nmi_vec_adr[23:2]);
+// Megamiga, October 2026: also while the level 7 request is pending (l_int7). The 68040 core
+// (and any CPU that autovectors without an IACK bus cycle) acknowledges the interrupt with
+// the vector read itself (vec_ack below), so the override must already be on for it;
+// "active" follows at the next 7 MHz enable and takes over without a gap.
+assign ovr = (active | l_int7) && ~dbr && ~ovl && cpu_rd && (cpu_address_in[23:2] == nmi_vec_adr[23:2]);
 
 // custom NMI vector address output $a1000c
 wire [15:0] nmi_adr_out = ovr ? (!cpu_address_in[1] ? 16'h00a1 : 16'h000c) : 16'h0000; 
@@ -89,13 +98,31 @@ wire int7_req = freeze_req;
 // level7 interrupt ack cycle, on Amiga interrupt vector number is read from kickstart rom
 wire int7_ack = &cpu_address_in && ~_cpu_as;
 
+// Megamiga, October 2026: the 68040 core has no IACK cycle; it reads the level 7 vector
+// (VBR + $7C) right away, and its bus cycles are so short that the overlap of the bridge's
+// rd with _cpu_as (3 clocks) can fall between two 7 MHz enables. So the vector read of a pending request (l_int7) is caught on
+// every clock (vec_ack) and does at the next enable what the IACK path does: int7 off, the
+// request done, the cartridge active and visible - without waiting for cpu_rd. (rd alone
+// lasts a whole 7 MHz period, so "sel_cart && cpu_rd", which ends "active", is always seen;
+// only the terms that also need _cpu_as can miss.) A 68000 acknowledges with its IACK cycle
+// first, so l_int7 is already off at its vector read: for it nothing changes.
+wire int7_vec = ~_cpu_as && cpu_rd && ~dbr && (cpu_address_in[23:2] == nmi_vec_adr[23:2]);
+reg  vec_ack = 1'b0;
+always @ (posedge clk) begin
+	if (cpu_rst || clk7_en)                 // consumed at each 7 MHz enable...
+		vec_ack <= 1'b0;
+	if (!cpu_rst && l_int7 && int7_vec)     // ...a new one wins
+		vec_ack <= 1'b1;
+end
+
 // level 7 interrupt request logic
 // interrupt request lines are sampled during S4->S5 transition (falling cpu clock edge)
 always @ (posedge clk) begin
 	if (clk7_en) begin
 		     if (cpu_rst)  int7 <= 0;
 		else if (int7_req) int7 <= 1;
-		else if (int7_ack) int7 <= 0;
+		//else if (int7_ack) int7 <= 0;
+		else if (int7_ack || vec_ack) int7 <= 0;   // Megamiga: see vec_ack
 	end
 end
 
@@ -109,12 +136,13 @@ always @ (posedge clk) begin
 	end
 end
 
-reg l_int7=0;
+//reg l_int7=0;   // Megamiga: declared above
 always @ (posedge clk) begin
 	if (clk7_en) begin
 		     if (cpu_rst)              l_int7 <= 0;
 		else if (l_int7_req)           l_int7 <= 1;
-		else if (l_int7_ack && cpu_rd) l_int7 <= 0;
+		//else if (l_int7_ack && cpu_rd) l_int7 <= 0;
+		else if ((l_int7_ack && cpu_rd) || vec_ack) l_int7 <= 0;   // Megamiga: see vec_ack
 	end
 end
 
@@ -127,7 +155,8 @@ always @ (posedge clk) begin
 			active <= 0;
 			stealth <= 0;
 		end
-		else if (l_int7 && l_int7_ack && cpu_rd) begin
+		//else if (l_int7 && l_int7_ack && cpu_rd) begin
+		else if ((l_int7 && l_int7_ack && cpu_rd) || vec_ack) begin   // Megamiga: see vec_ack
 			active <= 1;
 			stealth <= 1;
 		end
