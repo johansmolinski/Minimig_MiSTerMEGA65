@@ -143,6 +143,10 @@ reg  [3:0] sdram_state;
 reg  [2:0] slot_type = IDLE;
 reg [15:0] sdata_reg;
 reg        chipWE;
+// Megamiga 0.7: the snoop's own copy of the chipset write (see the RAS state)
+reg [24:1] snoopAddr;
+reg [15:0] snoopWR;
+reg  [1:0] snoopBS;
 
 
 ////////////////////////////////////////
@@ -192,9 +196,16 @@ cpu_cache_new cpu_cache
 	.sdr_read_req     (cache_req),             // sdram read request from cache
 	.sdr_read_ack     (cache_fill),            // sdram read acknowledge to cache
 	.snoop_act        (chipWE),                // snoop act (write only - just update existing data in cache)
-	.snoop_adr        (chipAddr),              // snoop address
-	.snoop_dat_w      (chipWR),                // snoop write data
-	.snoop_bs         ({!chipU, !chipL})       // snoop byte selects
+	// Megamiga 0.7: the address, data and byte selects of the chipset WRITE, captured with
+	// it - the live chip bus (and a chipWE left over from an earlier write slot) made the
+	// snoop "update" whatever the CPU was fetching through the cache with bus junk, which
+	// turbo Kickstart exposed (the chip address lines carry the CPU's ROM address then)
+	//.snoop_adr        (chipAddr),              // snoop address
+	//.snoop_dat_w      (chipWR),                // snoop write data
+	//.snoop_bs         ({!chipU, !chipL})       // snoop byte selects
+	.snoop_adr        (snoopAddr),             // snoop address
+	.snoop_dat_w      (snoopWR),               // snoop write data
+	.snoop_bs         (snoopBS)                // snoop byte selects
 );
 
 //reg cache_fill;
@@ -387,6 +398,7 @@ always @ (posedge sysclk) begin
 				if(~&rcnt) rcnt <= rcnt + 1'd1;
 				flp_last        <= 0;
 				casaddr[9]      <= 0;    // Megamiga: Amiga ports use columns 0..511
+				chipWE          <= 0;    // Megamiga 0.7: only a chipset write slot snoops
 
 				// we give the chipset first priority
 				// (this includes anything on the "motherboard" - chip RAM, slow RAM and Kickstart, turbo modes notwithstanding)
@@ -399,6 +411,9 @@ always @ (posedge sysclk) begin
 					cas_sd_we    <= chipRW;
 					datawr       <= chipWR;
 					chipWE       <= !chipRW;
+					snoopAddr    <= chipAddr;    // Megamiga 0.7: what the snoop uses
+					snoopWR      <= chipWR;
+					snoopBS      <= {!chipU, !chipL};
 				end
 				// Megamiga: floppy/IDE ROM port (see the port list)
 				//else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req))) begin
