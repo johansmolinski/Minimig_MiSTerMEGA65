@@ -85,6 +85,8 @@ wire   [8:0] hdiwstrt = {hdiwstrt_h8, hdiwstrt_l};
 reg    [7:0] hdiwstop_l;    // horizontal display window stop position, H7-H0
 reg          hdiwstop_h8;   // horizontal display window stop position, H8
 wire   [8:0] hdiwstop = {hdiwstop_h8, hdiwstop_l};
+reg    [1:0] hdiwstrt_lo;   // AGA 70/35 ns bits of the start (upstream 61d3f02)
+reg    [1:0] hdiwstop_lo;   // AGA 70/35 ns bits of the stop  (upstream 61d3f02)
 
 wire  [8:1] bpldata_out;    // bitplane serial data out from shifters
 wire  [8:1] bpldata;      // raw bitplane serial video data
@@ -286,9 +288,9 @@ always @(posedge clk)
 always @(posedge clk)
   if (clk7_en) begin
     if (reg_address_in[8:1]==DIWSTRT[8:1])
-      hdiwstrt_h8 <= 1'b0; // diwstop H9 = 0
+      {hdiwstrt_h8,hdiwstrt_lo} <= 3'b000; // diwstop H9 = 0
     else if (reg_address_in[8:1]==DIWHIGH[8:1] && ecs)
-      hdiwstrt_h8 <= data_in[5];
+      {hdiwstrt_h8,hdiwstrt_lo} <= {data_in[5],aga ? data_in[4:3] : 2'b00};
   end
 
 // HDIWSTOP
@@ -303,9 +305,9 @@ always @(posedge clk)
 always @(posedge clk)
   if (clk7_en) begin
     if (reg_address_in[8:1]==DIWSTOP[8:1])
-      hdiwstop_h8 <= 1'b1; // diwstop H8 = 1
+      {hdiwstop_h8,hdiwstop_lo} <= 3'b100; // diwstop H8 = 1
     else if (reg_address_in[8:1]==DIWHIGH[8:1] && ecs)
-      hdiwstop_h8 <= data_in[13];
+      {hdiwstop_h8,hdiwstop_lo} <= {data_in[13],aga ? data_in[12:11] : 2'b00};
   end
 
 assign deniseid_out = reg_address_in[8:1]==DENISEID[8:1] ? aga ? 16'h00f8 : ecs ? 16'hfffc : 16'hffff : 16'h0000;
@@ -314,19 +316,22 @@ assign deniseid_out = reg_address_in[8:1]==DENISEID[8:1] ? aga ? 16'h00f8 : ecs 
 
 // generate window enable signal
 // true when beamcounter satisfies horizontal diwstrt/diwstop limits
-always @(posedge clk)
-  if (clk7_en) begin
-    if (hpos[8:0]==hdiwstrt[8:0])
-      window <= 1;
-    else if (hpos[8:0]==hdiwstop[8:0])
-      window <= 0;
-  end
+reg  [2:0] strt_d, stop_d;
+wire [3:0] strt_s = {strt_d, clk7_en && hpos[8:0]==hdiwstrt[8:0]};
+wire [3:0] stop_s = {stop_d, clk7_en && hpos[8:0]==hdiwstop[8:0]};
 
-reg window_ena;
-always @(posedge clk)
-  if (clk7_en) begin
-    window_ena <= window;
-  end
+always @(posedge clk) begin
+  strt_d <= strt_s[2:0];
+  stop_d <= stop_s[2:0];
+  if (strt_s[hdiwstrt_lo])
+    window <= 1;
+  else if (stop_s[hdiwstop_lo])
+    window <= 0;
+end
+
+reg [3:0] window_d;
+always @(posedge clk) window_d <= {window_d[2:0], window};
+wire window_ena = window_d[3];
 
 //--------------------------------------------------------------------------------------
 
