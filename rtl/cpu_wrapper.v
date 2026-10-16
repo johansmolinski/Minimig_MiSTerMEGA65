@@ -174,6 +174,11 @@ module cpu_wrapper
 	// Megamiga, October 2026 (CPU040 != 0): 1 = the AP68040, 0 = TG68K (static between
 	// resets: the profile's CPU radio, which cold-boots the Amiga when it changes)
 	input             cpu040_sel,
+	// Megamiga 0.7 diagnostics (IDE_DIAG builds): where the CPU is and how long its
+	// current bus cycle has been waiting
+	output     [31:0] dbg_addr,
+	output      [7:0] dbg_state,
+	output reg [23:0] dbg_stall,
 	// Megamiga, October 2026 (CPU040): 512 KB Slow RAM at $C00000 (the 68040 caches it)
 	input             slowram_ena,
 	// Megamiga, October 2026 (CPU040 = 2, CPU040_FASTRAM = 1): the 68040's Fast RAM port
@@ -1292,5 +1297,16 @@ end
 // report the card as enabled, so the output is tied to 0 instead.
 //assign toccata_ena = ~ac_toccata;
 assign toccata_ena = 1'b0;
+
+// Megamiga 0.7 diagnostics: the address, the bus state and the clocks the current cycle
+// has waited for a ready (saturating), read through the IDE board's diagnostics snapshot
+assign dbg_addr  = cpu_addr;
+assign dbg_state = {cpu_req, ramsel_i, chipreq, ext_sel, fastchip_selack, cpu040_sel, cpustate};
+always @(posedge clk) begin
+	if (cpu_req & ~(chipready | ramready | fastchip_ready | ext_ready)) begin
+		if (~&dbg_stall) dbg_stall <= dbg_stall + 1'd1;
+	end
+	else dbg_stall <= 24'd0;
+end
 
 endmodule
