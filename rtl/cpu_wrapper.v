@@ -274,7 +274,12 @@ wire sel_rtgreg = sel_rtgb & cpu_addr[22];        // its register half
 wire sel_rtg    = (cpu_addr[31:24] == 8'h02) | (sel_rtgb & ~cpu_addr[22]);
 
 // don't sel_kickram when writing
-wire sel_kickram   = !cpu_addr[31:24] && (&cpu_addr[23:19] || (cpu_addr[23:19] == 5'b11100)) && ckick && wr;	// $f8xxxx, e0xxxx
+//wire sel_kickram   = !cpu_addr[31:24] && (&cpu_addr[23:19] || (cpu_addr[23:19] == 5'b11100)) && ckick && wr;	// $f8xxxx, e0xxxx
+// Megamiga 0.7: turbo Kickstart for the TG68K (cachecfg[1], see turbokick_d): only
+// $F80000-$FFFFFF - $E00000 is the upper half of a 1 MB Kickstart (gary sel_kick1mb), which
+// Megamiga never loads; ramaddr[22:1] = cpu_addr[22:1] is then the kick bank of
+// minimig_sram_bridge.v ([22:19] = 1111), i.e. the SDRAM words the Kickstart loader wrote
+wire sel_kickram   = !cpu_addr[31:24] && (&cpu_addr[23:19]) && ckick && wr;	// $f8xxxx
 wire sel_kicklower = !cpu_addr[31:24] && (cpu_addr[23:18] == 6'b111110);
 wire sel_chipram   = !cpu_addr[31:21] && cchip; 		             //$000000 - $1FFFFF
 
@@ -903,6 +908,12 @@ wire ckick = turbokick_d & (!cpustate | dcache_d);
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: turbo chipram/kickstart
 // selects kept unchanged - they self-disable with cpucfg[1]=0 (68000), so
 // cchip/ckick and thus sel_chipram/sel_kickram are constant 0 in this port.
+// Megamiga 0.7: turbo Kickstart ON for the TG68K (main.vhd cachecfg "110"): its
+// Kickstart instruction fetches and data reads go through the ramsel port and
+// sdram_ctrl's CPU cache (which snoops the chipset port's writes, i.e. a Kickstart
+// reload) instead of the 16-bit chip bus. The AP68040 keeps its own path (its caches
+// hold ROM code anyway): turbokick_d is off while cpu040_sel. Turbo chip stays off
+// (cachecfg[0] = 0: Chip RAM coherence with the chipset's DMA).
 reg turbochip_d;
 reg turbokick_d;
 reg dcache_d;
@@ -914,7 +925,8 @@ always @(posedge clk) begin
 	end
 	else if (~cpu_req) begin	// No mem access, so safe to switch chipram access mode
 		turbochip_d <= cachecfg[0] & cpucfg[1];
-		turbokick_d <= cachecfg[1] & cpucfg[1];
+		//turbokick_d <= cachecfg[1] & cpucfg[1];
+		turbokick_d <= cachecfg[1] & cpucfg[1] & ~cpu040_sel;
 		dcache_d    <= cachecfg[2];
 	end
 end
