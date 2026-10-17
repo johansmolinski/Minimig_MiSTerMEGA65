@@ -197,7 +197,12 @@ module cpu_wrapper
 	input             ids_we,
 	input      [15:0] ids_data,
 	input             ids_last,
-	output      [1:0] ids_cons
+	output      [1:0] ids_cons,
+	// Megamiga 0.7: the Fast RAM map for the IDE board's DMA (ide_board.vhd): Zorro II on,
+	// the Zorro III board configured, its A31..A24 (the decode of sel_z2ram/sel_z3ram16)
+	output            fmap_z2,
+	output            fmap_z3,
+	output      [7:0] fmap_z3base
 );
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the SDRAM/DDR3 cpu port is
@@ -276,6 +281,9 @@ wire sel_z2ram  = !cpu_addr[31:24] && z2ram_ena &&
                   (cart_ar3 ? (cpu_addr[23:21] == 3'b001) : (cpu_addr[23] ^ |cpu_addr[22:21])); // addr[23:21] = 1..4 (AR3: 1)
 // Megamiga, October 2026: + the 16 MB Zorro III board (base A31..A24 from autoconfig)
 wire sel_z3ram16 = (cpu_addr[31:24] == z3_base) && z3_configured;
+assign fmap_z2     = z2ram_ena;      // Megamiga 0.7 (IDE DMA; cart_ar3 is the parent's)
+assign fmap_z3     = z3_configured;
+assign fmap_z3base = z3_base;
 //wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram;
 wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram | sel_z3ram16;
 wire sel_dd     = (cpu_addr[31:16] == 16'h00DD) && (cpu_addr[15:13] == 'b010);
