@@ -575,8 +575,14 @@ wire bus_done = chipready | ram_rdy_r | fastchip_ready | ext_ready;
 
 // physical-bus watchdog (2^20 clocks = 37 ms: Chip RAM may wait long for a slot,
 // but every target on this bus answers, so it only fires on a real fault)
+// Megamiga 0.7: 2^24 clocks = 591 ms. The IDE board holds a data register access within a
+// READ/WRITE MULTIPLE block until the next sector is there (ide_board.vhd), which is as
+// long as the SD card is busy - the SD spec allows 250 ms per write, and a card that took
+// longer than 37 ms there lost the CPU's word (a write error at the same block every time,
+// DMATest round 2 on the 68040).
 wire bus_berr;
-ap040_bus_timeout #(.COUNTER_BITS(20)) bus_timeout (
+//ap040_bus_timeout #(.COUNTER_BITS(20)) bus_timeout (
+ap040_bus_timeout #(.COUNTER_BITS(24)) bus_timeout (
 	.clk(clk),
 	.nreset(reset & f_rst_out),
 	.req(cpu_req & ~wk_hold),
