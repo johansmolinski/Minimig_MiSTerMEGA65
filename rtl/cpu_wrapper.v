@@ -190,7 +190,14 @@ module cpu_wrapper
 	output      [3:0] fp_be,
 	output     [31:0] fp_wdata,
 	input     [127:0] fp_rdata,
-	input             fp_ack
+	input             fp_ack,
+	// Megamiga 0.7 (CPU040 = 2): the IDE data stream between ide_board.vhd and the
+	// AP68040's island (see ap040_island.v); 0 / unused otherwise
+	output            ids_rdy,
+	input             ids_we,
+	input      [15:0] ids_data,
+	input             ids_last,
+	output      [1:0] ids_cons
 );
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the SDRAM/DDR3 cpu port is
@@ -381,6 +388,8 @@ reg        chipready;
 reg        z2ram_ena;
 reg        z3_configured;   // Megamiga: the Zorro III board has its base address
 reg  [7:0] z3_base;         // Megamiga: A31..A24 of the Zorro III board
+reg        ide_configured;  // AExp: the IDE board has its base address (Megamiga 0.7: here
+reg  [7:0] ide_base;        // for the 68040's IDE data stream); A23..A16 of the IDE board
 // Megamiga, October 2026 (cpu040 branch): the RTG card as an autoconfig Zorro III
 // board (8 MB, I/O type, manufacturer 2011, product 102), so that an MMU setup
 // maps it like every other board (Commodore's 68040.library maps the memory
@@ -506,6 +515,7 @@ cpu_inst_p
 );
 assign ram_hold = 1'b0;
 assign {fp_req, fp_we, fp_line, fp_addr, fp_be, fp_wdata} = 0;
+assign {ids_rdy, ids_cons} = 0;
 end
 else begin : g_ap040
 // Megamiga, October 2026: TG68K AND the AP68040, chosen at run time by cpu040_sel (the
@@ -715,6 +725,7 @@ ap040_pipe_tg68k_compat #(
 	.m_rdata(32'd0)
 );
 assign {fp_req, fp_we, fp_line, fp_addr, fp_be, fp_wdata} = 0;
+assign {ids_rdy, ids_cons} = 0;
 end
 else begin : g_island
 // CPU040 = 2: the core on its own clock (clk_cpu), behind ap040_island's request
@@ -763,6 +774,12 @@ ap040_island #(
 	.fp_wdata(fp_wdata),
 	.fp_rdata(fp_rdata),
 	.fp_ack(fp_ack),
+	.ide_win({gayle_on, ide_configured, ide_base[7:1]}),
+	.ids_rdy(ids_rdy),
+	.ids_we(ids_we),
+	.ids_data(ids_data),
+	.ids_last(ids_last),
+	.ids_cons(ids_cons),
 	.nresetout(f_rst_out),
 	.cacr_out(a_cacr),
 	.vbr_out(f_vbr),
@@ -1026,8 +1043,8 @@ reg       ac_ide;          // AExp: the IDE board is the board being configured
 reg       ac_z3;           // Megamiga: the 16 MB Zorro III board is being configured
 //reg       z3_configured;   // Megamiga: declared above the CPU generate block
 //reg [7:0] z3_base;         // Megamiga: declared above the CPU generate block
-reg       ide_configured;  // AExp: the IDE board has its base address
-reg [7:0] ide_base;        // AExp: A23..A16 of the IDE board
+//reg       ide_configured;  // AExp: declared above the CPU generate block (Megamiga 0.7)
+//reg [7:0] ide_base;        // AExp: declared above the CPU generate block (Megamiga 0.7)
 reg [3:0] autocfg_data;
 
 always @(*) begin
