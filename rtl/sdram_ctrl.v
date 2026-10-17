@@ -106,11 +106,51 @@ module sdram_ctrl
 	input       [3:0] fpBE,
 	input      [31:0] fpWR,
 	output reg [127:0] fpRD,
-	output reg        fpAck
+	output reg        fpAck,
+	// Megamiga 0.7: the IDE board's DMA (ide_board.vhd) - a second client of the fp_* slots,
+	// same protocol and timing (dmRD = fpRD, the line of the last read slot of either client).
+	// A one-sysclk front end (p_*) picks the client and registers its request with its
+	// address and data, so both clients pass through one register stage; with both waiting
+	// they take turns. Writes snoop cpu_cache_new (the TG68K's cache) like chipset writes.
+	input             dmReq,
+	input             dmWE,
+	input             dmLine,
+	input      [24:2] dmAddr,
+	input       [3:0] dmBE,
+	input      [31:0] dmWR,
+	output reg        dmAck
 );
 
 initial flpAck = 1'b0;   // Megamiga: no initialiser on an output port in SystemVerilog mode
 initial fpAck  = 1'b0;
+initial dmAck  = 1'b0;
+
+// Megamiga 0.7: the fp_* / dm* front end. p_sel picks the client whose request p_req and
+// the p_* data hold one clock later (p_selq says whose they are). The acknowledge is used
+// live (an access acknowledged in a slot's last state is not pending in the next RAS).
+reg        p_sel = 0, p_selq = 0, p_last = 0;
+reg        p_req = 0, p_we = 0, p_line = 0;
+reg [24:2] p_addr;
+reg  [3:0] p_be;
+reg [31:0] p_wr;
+wire       p_pend = p_req ^ (p_selq ? dmAck : fpAck);
+always @(posedge sysclk) begin
+	p_selq <= p_sel;
+	p_req  <= p_sel ? dmReq  : fpReq;
+	p_we   <= p_sel ? dmWE   : fpWE;
+	p_line <= p_sel ? dmLine : fpLine;
+	p_addr <= p_sel ? dmAddr : fpAddr;
+	p_be   <= p_sel ? dmBE   : fpBE;
+	p_wr   <= p_sel ? dmWR   : fpWR;
+	// switch only while the selected client has nothing pending (and no switch is on its way),
+	// judged by its LIVE request: p_req takes the same sample at this edge, so a request that
+	// arrives now is either seen here (no switch) or not in p_req either (no slot starts for it
+	// while the p_* change over to the other client)
+	if(p_sel == p_selq && !(p_sel ? (dmReq ^ dmAck) : (fpReq ^ fpAck))) begin
+		if((dmReq ^ dmAck) && (!(fpReq ^ fpAck) || !p_last)) p_sel <= 1;
+		else if(fpReq ^ fpAck)                               p_sel <= 0;
+	end
+end
 
 
 reg [15:0] sd_data_out;
@@ -398,7 +438,7 @@ always @ (posedge sysclk) begin
 				if(~&rcnt) rcnt <= rcnt + 1'd1;
 				flp_last        <= 0;
 				casaddr[9]      <= 0;    // Megamiga: Amiga ports use columns 0..511
-				chipWE          <= 0;    // Megamiga 0.7: only a chipset write slot snoops
+				chipWE          <= 0;    // Megamiga 0.7: only a chipset or fp_* write slot snoops
 
 				// we give the chipset first priority
 				// (this includes anything on the "motherboard" - chip RAM, slow RAM and Kickstart, turbo modes notwithstanding)
@@ -417,7 +457,7 @@ always @ (posedge sysclk) begin
 				end
 				// Megamiga: floppy/IDE ROM port (see the port list)
 				//else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req))) begin
-				else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req | (fpReq ^ fpAck)))) begin
+				else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req | p_pend))) begin
 					slot_type    <= FLOPPY;
 					flp_last     <= 1;
 					{sd_ba,sd_addr,casaddr[8:0]} <= {2'b00, flpAddr};
@@ -439,36 +479,46 @@ always @ (posedge sysclk) begin
 					datawr       <= writeDat;
 				end
 				// Megamiga: the 68040's Fast RAM port (see the port list)
-				else if((fpReq ^ fpAck) && ~&rcnt) begin
+				else if(p_pend && ~&rcnt) begin
 					sd_ras       <= 0;
 					cas_sd_cas   <= 0;
 					fp_done0     <= 1;
 					fp_two       <= 0;
-					if(fpWE) begin
+					if(p_we) begin
 						// the high half first, a half without byte enables not at all;
 						// both halves in one slot: a second WRITE into the open row two
 						// states after the first, which then leaves out its auto precharge
 						slot_type    <= FP_WRITE;
 						cas_sd_we    <= 0;
-						if(~fp_done0 & |fpBE[3:2]) begin
-							{sd_ba,sd_addr,casaddr[8:0]} <= {fpAddr, 1'b0};
-							cas_dqm  <= ~fpBE[3:2];
-							datawr   <= fpWR[31:16];
+						// Megamiga 0.7 (IDE DMA shares this port): the write snoops
+						// cpu_cache_new like a chipset write, one word per chipWE pulse - the
+						// first half here, a second half at state 4 (both lie in one line)
+						chipWE       <= 1;
+						if(~fp_done0 & |p_be[3:2]) begin
+							{sd_ba,sd_addr,casaddr[8:0]} <= {p_addr, 1'b0};
+							cas_dqm  <= ~p_be[3:2];
+							datawr   <= p_wr[31:16];
 							fp_fin   <= 1;
-							fp_two   <= |fpBE[1:0];
+							fp_two   <= |p_be[1:0];
+							snoopAddr <= {p_addr, 1'b0};
+							snoopWR   <= p_wr[31:16];
+							snoopBS   <= p_be[3:2];
 						end
 						else begin
-							{sd_ba,sd_addr,casaddr[8:0]} <= {fpAddr, 1'b1};
-							cas_dqm  <= ~fpBE[1:0];
-							datawr   <= fpWR[15:0];
+							{sd_ba,sd_addr,casaddr[8:0]} <= {p_addr, 1'b1};
+							cas_dqm  <= ~p_be[1:0];
+							datawr   <= p_wr[15:0];
 							fp_fin   <= 1;
+							snoopAddr <= {p_addr, 1'b1};
+							snoopWR   <= p_wr[15:0];
+							snoopBS   <= p_be[1:0];
 						end
 					end
 					else begin
 						slot_type    <= FP_READ;
-						fp_blk       <= fpLine ? fp_done0 : fpAddr[3];
-						{sd_ba,sd_addr,casaddr[8:0]} <= {fpAddr[24:4], fpLine ? fp_done0 : fpAddr[3], 2'b00};
-						fp_fin       <= ~fpLine | fp_done0;
+						fp_blk       <= p_line ? fp_done0 : p_addr[3];
+						{sd_ba,sd_addr,casaddr[8:0]} <= {p_addr[24:4], p_line ? fp_done0 : p_addr[3], 2'b00};
+						fp_fin       <= ~p_line | fp_done0;
 					end
 				end
 				// request from read cache
@@ -504,20 +554,26 @@ always @ (posedge sysclk) begin
 				if(slot_type == FP_WRITE && fp_two) sd_addr[10] <= 0;  // the row stays open
 				if(slot_type == FP_WRITE && fp_fin && !fp_two) begin
 					fp_done0     <= 0;
-					fpAck        <= ~fpAck;
+					if(p_selq) dmAck <= ~dmAck; else fpAck <= ~fpAck;   // Megamiga 0.7: the slot's client
+					p_last <= p_selq;
 				end
 			end
 
 			// Megamiga: the second WRITE of a 68040 port long (fp_two), with auto precharge
 			4 : if(slot_type == FP_WRITE && fp_two) begin
-				sd_addr         <= {~fpBE[1:0], 1'b1, casaddr[9:1], 1'b1};
+				sd_addr         <= {~p_be[1:0], 1'b1, casaddr[9:1], 1'b1};
 				sd_cas          <= 0;
 				sd_we           <= 0;
-				sd_data_out     <= fpWR[15:0];
+				sd_data_out     <= p_wr[15:0];
 				sd_data_oe      <= 1;
-				sd_dqm          <= ~fpBE[1:0];
+				sd_dqm          <= ~p_be[1:0];
 				fp_done0        <= 0;
-				fpAck           <= ~fpAck;
+				if(p_selq) dmAck <= ~dmAck; else fpAck <= ~fpAck;   // Megamiga 0.7: the slot's client
+				p_last <= p_selq;
+				chipWE          <= 1;    // Megamiga 0.7: the snoop of the second half
+				snoopAddr       <= {p_addr, 1'b1};
+				snoopWR         <= p_wr[15:0];
+				snoopBS         <= p_be[1:0];
 			end
 		endcase
 
@@ -531,7 +587,8 @@ always @ (posedge sysclk) begin
 					else       fpRD[127:64] <= fp_sh;
 					if(fp_fin) begin
 						fp_done0 <= 0;
-						fpAck    <= ~fpAck;
+						if(p_selq) dmAck <= ~dmAck; else fpAck <= ~fpAck;   // Megamiga 0.7: the slot's client
+						p_last <= p_selq;
 					end
 				end
 			endcase
