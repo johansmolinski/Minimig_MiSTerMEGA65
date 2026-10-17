@@ -245,7 +245,12 @@ wire        mem_flt_mmu;
 // clock-enable or internal-FSM wedge, which is itself the decisive
 // diagnostic.
 wire        core_stall_flt;
-ap040_bus_timeout #(.COUNTER_BITS(21)) core_stall_watchdog (
+// Megamiga 0.7: 2^25 (0.8 s at 42 MHz), above cpu_wrapper's bus watchdog (2^24 core
+// clocks = 591 ms), which an access the IDE board holds while the SD card is busy may now
+// approach: at 2^21 this one fired first and the CPU took an access error (a frozen
+// machine in DMATest on the 68040)
+//ap040_bus_timeout #(.COUNTER_BITS(21)) core_stall_watchdog (
+ap040_bus_timeout #(.COUNTER_BITS(25)) core_stall_watchdog (
 	.clk(clk),
 	.nreset(nreset),
 	.req(mem_req),
