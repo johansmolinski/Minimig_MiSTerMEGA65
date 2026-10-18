@@ -98,7 +98,10 @@ module ap040_pipe_tg68k_compat
 	//input   [4:0] cache_z3_base0,
 	input   [7:0] cache_z3_base0,
 	input         cache_z3_ena0,
-	input   [3:0] cache_z3_base1,
+	// Megamiga 0.7: A31..A25 of the 32 MB Zorro III board (was A31..A28, a 256 MB window).
+	// Every compare of window 1 below is [31:25].
+	//input   [3:0] cache_z3_base1,
+	input   [6:0] cache_z3_base1,
 	input         cache_z3_ena1,
 	// Megamiga, October 2026: the motherboard windows nothing but the CPU writes, the
 	// Kickstart ROM ($F80000-$FFFFFF) and the 512 KB Slow RAM ($C00000-$C7FFFF):
@@ -340,7 +343,8 @@ wire        c_dbg_halted;
 // are registered copies (autoconfig state, set once at boot).
 wire [31:0] stw_addr;
 reg  [7:0]  sw_z3b0;   // Megamiga: [7:0], see cache_z3_base0
-reg  [3:0]  sw_z3b1;
+//reg  [3:0]  sw_z3b1;
+reg  [6:0]  sw_z3b1;   // Megamiga 0.7: [6:0], see cache_z3_base1
 reg         sw_z3e0, sw_z3e1, sw_z2e;
 always @(posedge clk) begin
 	sw_z3b0 <= cache_z3_base0; sw_z3e0 <= cache_z3_ena0;
@@ -357,11 +361,11 @@ end
 wire mem_postok = mm_postok &&
                (cache_allow_all ? (mm_addr[15:8] != 8'hF1) :
                 (((mm_addr[31:24] == sw_z3b0) && sw_z3e0) ||
-                 ((mm_addr[31:28] == sw_z3b1) && sw_z3e1) ||
+                 ((mm_addr[31:25] == sw_z3b1) && sw_z3e1) ||
                  (!mm_addr[31:24] && (mm_addr[23] ^ |mm_addr[22:21]) && sw_z2e)));
 wire stw_ram = cache_allow_all ? (stw_addr[15:8] != 8'hF1) :
                (((stw_addr[31:24] == sw_z3b0) && sw_z3e0) ||
-                ((stw_addr[31:28] == sw_z3b1) && sw_z3e1) ||
+                ((stw_addr[31:25] == sw_z3b1) && sw_z3e1) ||
                 (!stw_addr[31:24] && (stw_addr[23] ^ |stw_addr[22:21]) && sw_z2e) ||
                 (stw_addr[31:21] == 11'd0));
 
@@ -664,7 +668,7 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	// Megamiga: the Zorro windows (the fill channel's) and the motherboard ones
 	wire cache_zwin =
 		((mm_addr[31:24] == cache_z3_base0) && cache_z3_ena0) ||
-		((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1) ||
+		((mm_addr[31:25] == cache_z3_base1) && cache_z3_ena1) ||
 		(!mm_addr[31:24] && (mm_addr[23] ^ |mm_addr[22:21]) && cache_z2_ena);
 	wire cache_mbwin =
 		((mm_addr[31:19] == {8'h00, 5'b11111}) && cache_rom_ena) ||
@@ -679,8 +683,10 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	//              ((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1);
 	// Megamiga: the Zorro II and the 16 MB Zorro III RAM (cache_zwin): only the CPU
 	// writes them (the IDE and network boards are programmed I/O)
-	wire cb_win = cache_allow_all ? (mm_addr[15:8] != 8'hF1) :
-	              (((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1) || cache_zwin);
+	//wire cb_win = cache_allow_all ? (mm_addr[15:8] != 8'hF1) :
+	//              (((mm_addr[31:28] == cache_z3_base1) && cache_z3_ena1) || cache_zwin);
+	// Megamiga 0.7: window 1 is the 32 MB Zorro III board, already in cache_zwin
+	wire cb_win = cache_allow_all ? (mm_addr[15:8] != 8'hF1) : cache_zwin;
 
 	// The instruction read path (plan M14).  The core launches a lookup
 	// with every fetch it issues (ifp_req includes the clock enable): the
@@ -703,7 +709,8 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	// straight into the data path's hit decision they made a dll_28 ->
 	// clk_38 path of 20 logic levels ending at the BCU's request registers.
 	reg  [7:0] w_z3b0;   // Megamiga: [7:0], see cache_z3_base0
-	reg  [3:0] w_z3b1;
+	//reg  [3:0] w_z3b1;
+	reg  [6:0] w_z3b1;   // Megamiga 0.7: [6:0], see cache_z3_base1
 	reg        w_z3e0, w_z3e1, w_z2e;
 	reg        w_rom, w_slow;   // Megamiga
 	always @(posedge clk) begin
@@ -719,7 +726,7 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 	wire ia_chip  = (ifp_pa[31:21] == 11'd0);
 	wire ia_win   =
 		((ifp_pa[31:24] == w_z3b0) && w_z3e0) ||
-		((ifp_pa[31:28] == w_z3b1) && w_z3e1) ||
+		((ifp_pa[31:25] == w_z3b1) && w_z3e1) ||
 		(!ifp_pa[31:24] && (ifp_pa[23] ^ |ifp_pa[22:21]) && w_z2e) ||
 		((ifp_pa[31:19] == {8'h00, 5'b11111}) && w_rom) ||     // Megamiga
 		((ifp_pa[31:19] == {8'h00, 5'b11000}) && w_slow);
@@ -765,7 +772,7 @@ if (AP040_ENABLE_CACHE != 0) begin : g_cache
 		end
 	wire da_win =
 		((dfp_pa[31:24] == w_z3b0) && w_z3e0) ||
-		((dfp_pa[31:28] == w_z3b1) && w_z3e1) ||
+		((dfp_pa[31:25] == w_z3b1) && w_z3e1) ||
 		(!dfp_pa[31:24] && (dfp_pa[23] ^ |dfp_pa[22:21]) && w_z2e) ||
 		((dfp_pa[31:19] == {8'h00, 5'b11111}) && w_rom) ||     // Megamiga
 		((dfp_pa[31:19] == {8'h00, 5'b11000}) && w_slow) ||

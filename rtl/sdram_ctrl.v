@@ -64,7 +64,10 @@ module sdram_ctrl
 	output reg [15:0] chipRD,
 	output     [47:0] chip48,
 	// cpu
-	input      [24:1] cpuAddr,
+	// Megamiga 0.7: + bit 25 = column bit 9, the upper half of every row (the 32 MB Zorro III
+	// board, all four banks); the chipset port stays in the lower halves
+	//input      [24:1] cpuAddr,
+	input      [25:1] cpuAddr,
 	input             cpuCS,
 	input       [1:0] cpustate,
 	input             cpuL,
@@ -80,6 +83,8 @@ module sdram_ctrl
 	// when the access is done (read data in flpRD). Priority: chipset first, then this
 	// port - but never twice in a row while the CPU waits, and never while a refresh is
 	// due - then the CPU, then refresh.
+	// Megamiga 0.7: UNUSED (tied off by amiga_sdram since floppy-direct) and its slot removed:
+	// the upper halves of the rows now hold the 32 MB Zorro III board (cpuAddr[25]).
 	input             flpReq,
 	input      [22:1] flpAddr,
 	input             flpWE,
@@ -102,7 +107,8 @@ module sdram_ctrl
 	input             fpReq,
 	input             fpWE,
 	input             fpLine,
-	input      [24:2] fpAddr,
+	//input      [24:2] fpAddr,
+	input      [25:2] fpAddr,       // Megamiga 0.7: bit 25 = column bit 9, like cpuAddr
 	input       [3:0] fpBE,
 	input      [31:0] fpWR,
 	output reg [127:0] fpRD,
@@ -115,7 +121,8 @@ module sdram_ctrl
 	input             dmReq,
 	input             dmWE,
 	input             dmLine,
-	input      [24:2] dmAddr,
+	//input      [24:2] dmAddr,
+	input      [25:2] dmAddr,       // Megamiga 0.7: bit 25 = column bit 9, like cpuAddr
 	input       [3:0] dmBE,
 	input      [31:0] dmWR,
 	output reg        dmAck
@@ -130,7 +137,7 @@ initial dmAck  = 1'b0;
 // live (an access acknowledged in a slot's last state is not pending in the next RAS).
 reg        p_sel = 0, p_selq = 0, p_last = 0;
 reg        p_req = 0, p_we = 0, p_line = 0;
-reg [24:2] p_addr;
+reg [25:2] p_addr;
 reg  [3:0] p_be;
 reg [31:0] p_wr;
 wire       p_pend = p_req ^ (p_selq ? dmAck : fpAck);
@@ -184,7 +191,7 @@ reg  [2:0] slot_type = IDLE;
 reg [15:0] sdata_reg;
 reg        chipWE;
 // Megamiga 0.7: the snoop's own copy of the chipset write (see the RAS state)
-reg [24:1] snoopAddr;
+reg [25:1] snoopAddr;   // (bit 25: the 32 MB Zorro III board)
 reg [15:0] snoopWR;
 reg  [1:0] snoopBS;
 
@@ -264,7 +271,7 @@ reg        write_ena;
 reg        write_req;
 reg        write_ack;
 reg  [1:0] write_dqm;
-reg [24:1] writeAddr;
+reg [25:1] writeAddr;   // Megamiga 0.7: bit 25 = column bit 9
 reg [15:0] writeDat;
 
 always @ (posedge sysclk) begin
@@ -437,7 +444,8 @@ always @ (posedge sysclk) begin
 
 				if(~&rcnt) rcnt <= rcnt + 1'd1;
 				flp_last        <= 0;
-				casaddr[9]      <= 0;    // Megamiga: Amiga ports use columns 0..511
+				casaddr[9]      <= 0;    // Megamiga: Amiga ports use columns 0..511 (0.7: the
+				                         // chipset; the CPU/fp/dm slots set it from bit 25)
 				chipWE          <= 0;    // Megamiga 0.7: only a chipset or fp_* write slot snoops
 
 				// we give the chipset first priority
@@ -455,22 +463,26 @@ always @ (posedge sysclk) begin
 					snoopWR      <= chipWR;
 					snoopBS      <= {!chipU, !chipL};
 				end
-				// Megamiga: floppy/IDE ROM port (see the port list)
-				//else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req))) begin
-				else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req | p_pend))) begin
-					slot_type    <= FLOPPY;
-					flp_last     <= 1;
-					{sd_ba,sd_addr,casaddr[8:0]} <= {2'b00, flpAddr};
-					casaddr[9]   <= 1;
-					sd_ras       <= 0;
-					cas_dqm      <= {flpU,flpL};
-					cas_sd_cas   <= 0;
-					cas_sd_we    <= ~flpWE;
-					datawr       <= flpWR;
-				end
+				// Megamiga 0.7: the floppy/IDE ROM port is unused since floppy-direct (adf_sd.vhd,
+				// the IDE ROM in block RAM; amiga_sdram ties it off), and its area - bank 0, columns
+				// 512..1023 - is now part of the 32 MB Zorro III board, so the slot is gone
+//				// Megamiga: floppy/IDE ROM port (see the port list)
+//				//else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req))) begin
+//				else if((flpReq ^ flpAck) && ~&rcnt && ~(flp_last & (write_req | cache_req | p_pend))) begin
+//					slot_type    <= FLOPPY;
+//					flp_last     <= 1;
+//					{sd_ba,sd_addr,casaddr[8:0]} <= {2'b00, flpAddr};
+//					casaddr[9]   <= 1;
+//					sd_ras       <= 0;
+//					cas_dqm      <= {flpU,flpL};
+//					cas_sd_cas   <= 0;
+//					cas_sd_we    <= ~flpWE;
+//					datawr       <= flpWR;
+//				end
 				else if(write_req) begin
 					slot_type    <= CPU_WRITECACHE;
-					{sd_ba,sd_addr,casaddr[8:0]} <= writeAddr;
+					//{sd_ba,sd_addr,casaddr[8:0]} <= writeAddr;
+					{casaddr[9],sd_ba,sd_addr,casaddr[8:0]} <= writeAddr;   // Megamiga 0.7
 					sd_ras       <= 0;
 					cas_dqm      <= write_dqm;
 					cas_sd_we    <= 0;
@@ -495,7 +507,7 @@ always @ (posedge sysclk) begin
 						// first half here, a second half at state 4 (both lie in one line)
 						chipWE       <= 1;
 						if(~fp_done0 & |p_be[3:2]) begin
-							{sd_ba,sd_addr,casaddr[8:0]} <= {p_addr, 1'b0};
+							{casaddr[9],sd_ba,sd_addr,casaddr[8:0]} <= {p_addr, 1'b0};
 							cas_dqm  <= ~p_be[3:2];
 							datawr   <= p_wr[31:16];
 							fp_fin   <= 1;
@@ -505,7 +517,7 @@ always @ (posedge sysclk) begin
 							snoopBS   <= p_be[3:2];
 						end
 						else begin
-							{sd_ba,sd_addr,casaddr[8:0]} <= {p_addr, 1'b1};
+							{casaddr[9],sd_ba,sd_addr,casaddr[8:0]} <= {p_addr, 1'b1};
 							cas_dqm  <= ~p_be[1:0];
 							datawr   <= p_wr[15:0];
 							fp_fin   <= 1;
@@ -517,14 +529,15 @@ always @ (posedge sysclk) begin
 					else begin
 						slot_type    <= FP_READ;
 						fp_blk       <= p_line ? fp_done0 : p_addr[3];
-						{sd_ba,sd_addr,casaddr[8:0]} <= {p_addr[24:4], p_line ? fp_done0 : p_addr[3], 2'b00};
+						{casaddr[9],sd_ba,sd_addr,casaddr[8:0]} <= {p_addr[25:4], p_line ? fp_done0 : p_addr[3], 2'b00};
 						fp_fin       <= ~p_line | fp_done0;
 					end
 				end
 				// request from read cache
 				else if(cache_req) begin
 					slot_type    <= CPU_READCACHE;
-					{sd_ba,sd_addr,casaddr[8:0]} <= cpuAddr;
+					//{sd_ba,sd_addr,casaddr[8:0]} <= cpuAddr;
+					{casaddr[9],sd_ba,sd_addr,casaddr[8:0]} <= cpuAddr;   // Megamiga 0.7
 					sd_ras       <= 0;
 					cas_sd_cas   <= 0;
 				end

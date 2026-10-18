@@ -62,6 +62,10 @@
 // Zorro III boards of MiSTer (128/256 MB, DDR3) are replaced by ONE 16 MB //
 // Zorro III board (z3ena, 68020 only, needs Kickstart 2.0+), whose cycles //
 // leave on the ram* port with ramaddr[28:27] = 2'b10 (Zorro II = 2'b11).  //
+// Megamiga 0.7: a second, 32 MB Zorro III board (z3bena, independent of   //
+// z3ena), first among the Zorro III boards in the chain; its cycles carry  //
+// ramaddr[25] = 1 and the offset in [24:1] (main.vhd: the upper halves of  //
+// the SDRAM rows).                                                         //
 // The RTG window ($02xxxxxx) is not decoded. For the 68020 the IDE board  //
 // select drops for one clock after every completed access, because the   //
 // board ends a bus cycle only when its select goes away (68000 AS).        //
@@ -152,6 +156,8 @@ module cpu_wrapper
 	input             gayle_ena,
 	// Megamiga, October 2026: the 16 MB Zorro III board (68020 only)
 	input             z3ena,
+	// Megamiga 0.7: the 32 MB Zorro III board (68020/68040, independent of z3ena)
+	input             z3bena,
 	// Megamiga, October 2026: the network card (eth_card.vhd), also on ext_*
 	input             eth_ena,         // board present in the autoconfig chain
 	output            ext_eth,         // the ext_sel cycle is for the network card
@@ -186,7 +192,8 @@ module cpu_wrapper
 	output            fp_req,
 	output            fp_we,
 	output            fp_line,
-	output     [24:2] fp_addr,
+	//output     [24:2] fp_addr,
+	output     [25:2] fp_addr,      // Megamiga 0.7: bit 25 = the 32 MB Zorro III board
 	output      [3:0] fp_be,
 	output     [31:0] fp_wdata,
 	input     [127:0] fp_rdata,
@@ -202,7 +209,10 @@ module cpu_wrapper
 	// the Zorro III board configured, its A31..A24 (the decode of sel_z2ram/sel_z3ram16)
 	output            fmap_z2,
 	output            fmap_z3,
-	output      [7:0] fmap_z3base
+	output      [7:0] fmap_z3base,
+	// Megamiga 0.7: the 32 MB Zorro III board configured, its A31..A25 (sel_z3ram32)
+	output            fmap_z3b,
+	output      [6:0] fmap_z3bbase
 );
 
 // MiSTer2MEGA65 (AExp Amiga 500 port), June 2026: the SDRAM/DDR3 cpu port is
@@ -281,11 +291,16 @@ wire sel_z2ram  = !cpu_addr[31:24] && z2ram_ena &&
                   (cart_ar3 ? (cpu_addr[23:21] == 3'b001) : (cpu_addr[23] ^ |cpu_addr[22:21])); // addr[23:21] = 1..4 (AR3: 1)
 // Megamiga, October 2026: + the 16 MB Zorro III board (base A31..A24 from autoconfig)
 wire sel_z3ram16 = (cpu_addr[31:24] == z3_base) && z3_configured;
+// Megamiga 0.7: + the 32 MB Zorro III board (base A31..A25 from autoconfig)
+wire sel_z3ram32 = (cpu_addr[31:25] == z3b_base) && z3b_configured;
 assign fmap_z2     = z2ram_ena;      // Megamiga 0.7 (IDE DMA; cart_ar3 is the parent's)
 assign fmap_z3     = z3_configured;
 assign fmap_z3base = z3_base;
+assign fmap_z3b     = z3b_configured;
+assign fmap_z3bbase = z3b_base;
 //wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram;
-wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram | sel_z3ram16;
+//wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram | sel_z3ram16;
+wire sel_zram   = sel_z3ram0 | sel_z3ram1 | sel_z2ram | sel_z3ram16 | sel_z3ram32;
 wire sel_dd     = (cpu_addr[31:16] == 16'h00DD) && (cpu_addr[15:13] == 'b010);
 //wire sel_rtg    = (cpu_addr[31:24] == 8'h02);
 // Megamiga, October 2026: + the memory half of the RTG autoconfig board
@@ -361,13 +376,19 @@ assign ramdat = sel_rtg ? {ramdout[7:0], ramdout[15:8]}  : ramdout;
 //assign ramaddr[18]    =    sel_dd   | (sel_kicklower & bootrom) | cpu_addr[18];
 //assign ramaddr[17:16] = {2{sel_dd}} | cpu_addr[17:16];
 //assign ramaddr[15:1]  = cpu_addr[15:1];
-assign ramaddr[28]    = sel_z2ram | sel_z3ram16;
+// Megamiga 0.7: + the 32 MB Zorro III board: ramaddr[28:27] = 2'b10 like the 16 MB board,
+// ramaddr[25] = 1, [24:1] the offset (main.vhd puts it into the upper halves of the rows)
+//assign ramaddr[28]    = sel_z2ram | sel_z3ram16;
+assign ramaddr[28]    = sel_z2ram | sel_z3ram16 | sel_z3ram32;
 assign ramaddr[27]    = sel_z2ram;
 // Megamiga, October 2026: ramaddr[26] = 1: the RTG board memory ($02xxxxxx, [22:1] the offset)
 //assign ramaddr[26:24] = 3'b000;
 assign ramaddr[26]    = sel_rtg;
-assign ramaddr[25:24] = 2'b00;
-assign ramaddr[23]    = sel_z3ram16 & cpu_addr[23];
+//assign ramaddr[25:24] = 2'b00;
+//assign ramaddr[23]    = sel_z3ram16 & cpu_addr[23];
+assign ramaddr[25]    = sel_z3ram32;
+assign ramaddr[24]    = sel_z3ram32 & cpu_addr[24];
+assign ramaddr[23]    = (sel_z3ram16 | sel_z3ram32) & cpu_addr[23];
 assign ramaddr[22:19] = cpu_addr[22:19];
 assign ramaddr[18]    = (sel_kicklower & bootrom) | cpu_addr[18];
 assign ramaddr[17:1]  = cpu_addr[17:1];
@@ -396,6 +417,8 @@ reg        chipready;
 reg        z2ram_ena;
 reg        z3_configured;   // Megamiga: the Zorro III board has its base address
 reg  [7:0] z3_base;         // Megamiga: A31..A24 of the Zorro III board
+reg        z3b_configured;  // Megamiga 0.7: the 32 MB Zorro III board has its base address
+reg  [6:0] z3b_base;        // Megamiga 0.7: A31..A25 of the 32 MB Zorro III board
 reg        ide_configured;  // AExp: the IDE board has its base address (Megamiga 0.7: here
 reg  [7:0] ide_base;        // for the 68040's IDE data stream); A23..A16 of the IDE board
 // Megamiga, October 2026 (cpu040 branch): the RTG card as an autoconfig Zorro III
@@ -670,8 +693,11 @@ ap040_pipe_tg68k_compat #(
 	// the 16 MB Zorro III board: its 128 MB-aligned window (nothing else is there)
 	.cache_z3_base0(z3_base),   // exactly the 16 MB board (rtl/ap040 compat, Megamiga)
 	.cache_z3_ena0(z3_configured),
-	.cache_z3_base1(4'd0),
-	.cache_z3_ena1(1'b0),
+	// Megamiga 0.7: the 32 MB Zorro III board (window 1, A31..A25)
+	//.cache_z3_base1(4'd0),
+	//.cache_z3_ena1(1'b0),
+	.cache_z3_base1(z3b_base),
+	.cache_z3_ena1(z3b_configured),
 	.cache_rom_ena(1'b1),
 	.cache_slow_ena(slowram_ena),
 	.data_in(a_din),
@@ -778,6 +804,8 @@ ap040_island #(
 	.cache_z2_ena(z2ram_ena),
 	.cache_z3_base0(z3_base),
 	.cache_z3_ena0(z3_configured),
+	.cache_z3_base1(z3b_base),       // Megamiga 0.7: the 32 MB Zorro III board
+	.cache_z3_ena1(z3b_configured),
 	.cache_rom_ena(1'b1),
 	.cache_slow_ena(slowram_ena),
 	.fp_req(fp_req),
@@ -1055,6 +1083,7 @@ reg       ac_toccata;
 reg [2:0] ac_memcard;
 reg       ac_ide;          // AExp: the IDE board is the board being configured
 reg       ac_z3;           // Megamiga: the 16 MB Zorro III board is being configured
+reg       ac_z3b;          // Megamiga 0.7: the 32 MB Zorro III board is being configured
 //reg       z3_configured;   // Megamiga: declared above the CPU generate block
 //reg [7:0] z3_base;         // Megamiga: declared above the CPU generate block
 //reg       ide_configured;  // AExp: declared above the CPU generate block (Megamiga 0.7)
@@ -1079,6 +1108,25 @@ always @(*) begin
 			6'b001010: autocfg_data = 4'b0110;
 			6'b001011: autocfg_data = 4'b0011;
 			6'b010011: autocfg_data = 4'b1110; //serial=1
+			  default:;
+		endcase
+	end
+	// Megamiga 0.7: the 32 MB Zorro III board, the 16 MB board's entries with the size code
+	// 32 MB (extended size: 001) and serial 3. It comes first among the Zorro III boards
+	// (largest first): Kickstart places them in chain order from $40000000, each aligned to
+	// its size, so this order leaves no holes ($40000000, $42000000, RTG $43000000).
+	else if(ac_z3b) begin
+		case (chip_addr[6:1])
+			6'b000000: autocfg_data = 4'b1010;	// Zorro-III card, add mem, no ROM
+			6'b000001: autocfg_data = 4'b0001;	// 32 MB (extended size code 001)
+			6'b000010: autocfg_data = 4'b1110;	// ProductID=0x10 (only setting upper nibble)
+			6'b000100: autocfg_data = 4'b0000;	// Memory card, not silenceable, Extended size, reserved.
+			6'b000101: autocfg_data = 4'b1111;	// logical size matches physical size
+			6'b001000: autocfg_data = 4'b1110;	// Manufacturer ID: 0x139c
+			6'b001001: autocfg_data = 4'b1100;
+			6'b001010: autocfg_data = 4'b0110;
+			6'b001011: autocfg_data = 4'b0011;
+			6'b010011: autocfg_data = 4'b1100;	// serial=3
 			  default:;
 		endcase
 	end
@@ -1192,7 +1240,9 @@ end
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_toccata); //$E80000 - $E8FFFF
 //wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
 // Megamiga, October 2026: + ac_rtgb
-wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_rtgb || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
+//wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3 || ac_rtgb || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
+// Megamiga 0.7: + ac_z3b
+wire sel_autoconfig = (chip_addr[23:16] == 8'b11101000) && (ac_memcard || ac_z3b || ac_z3 || ac_rtgb || ac_ide || ac_eth || ac_toccata); //$E80000 - $E8FFFF
 
 //reg       z2ram_ena;  // Megamiga: declared above the CPU generate block
 reg [4:0] z3ram_base0;
@@ -1219,6 +1269,9 @@ always @(posedge clk) begin : autoconfig_blk
 		//ac_memcard  <= cpucfg[1] ? fastramcfg : fastramcfg[2] ? 3'd3 : {1'b0, fastramcfg[1:0]};
 		ac_memcard  <= {1'b0, fastramcfg[1:0]};
 		ac_z3          <= z3ena & cpucfg[1];
+		ac_z3b         <= z3bena & cpucfg[1];   // Megamiga 0.7
+		z3b_configured <= 0;
+		z3b_base       <= 7'h00;
 		ac_rtgb         <= cpucfg[1];        // Megamiga: the RTG board (68020/68040)
 		rtgb_configured <= 0;
 		rtgb_base       <= 9'h000;
@@ -1247,6 +1300,17 @@ always @(posedge clk) begin : autoconfig_blk
 			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - config, ZII RAM
 				z2ram_ena <= 1;
 				ac_memcard <= 0;
+			end
+		end
+		// Megamiga 0.7: the 32 MB Zorro III board, like the 16 MB one below; it needs A31..A25
+		else if(ac_z3b) begin
+			if (chip_addr[6:1] == 6'b100010) begin // Register 0x44 - base address
+				z3b_base       <= cpu_dout[15:9];
+				z3b_configured <= 1;
+				ac_z3b         <= 0;
+			end
+			else if (chip_addr[6:1] == 6'b100110) begin // Register 0x4C - shut up
+				ac_z3b         <= 0;
 			end
 		end
 		// Megamiga, October 2026: the Zorro III board. Kickstart writes the

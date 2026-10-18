@@ -101,6 +101,8 @@ module ap040_island
 	input             cache_z2_ena,
 	input       [7:0] cache_z3_base0,
 	input             cache_z3_ena0,
+	input       [6:0] cache_z3_base1,   // Megamiga 0.7: the 32 MB Zorro III board, A31..A25
+	input             cache_z3_ena1,
 	input             cache_rom_ena,  // the core caches the Kickstart ROM
 	input             cache_slow_ena, // the core caches the Slow RAM
 
@@ -109,7 +111,8 @@ module ap040_island
 	output reg        fp_req,
 	output reg        fp_we,
 	output reg        fp_line,
-	output reg [24:2] fp_addr,      // SDRAM long address (bank 24:23)
+	//output reg [24:2] fp_addr,      // SDRAM long address (bank 24:23)
+	output reg [25:2] fp_addr,      // SDRAM long address (bank 24:23, 25 = column bit 9)
 	output reg  [3:0] fp_be,        // [3] = the byte at the long's address
 	output reg [31:0] fp_wdata,
 	input     [127:0] fp_rdata,
@@ -140,12 +143,15 @@ wire c_nreset = c_rst_s[1];
 (* ASYNC_REG = "TRUE" *) reg [2:0] c_ipl_s0, c_ipl_s1;
 (* ASYNC_REG = "TRUE" *) reg [1:0] c_ack_s;
 (* ASYNC_REG = "TRUE" *) reg [1:0] c_snp_s;
-(* ASYNC_REG = "TRUE" *) reg [11:0] c_win_s0, c_win_s1;
+//(* ASYNC_REG = "TRUE" *) reg [11:0] c_win_s0, c_win_s1;
+(* ASYNC_REG = "TRUE" *) reg [19:0] c_win_s0, c_win_s1;   // Megamiga 0.7: + [19:12] window 1
 (* ASYNC_REG = "TRUE" *) reg  [8:0] c_ide_s0, c_ide_s1;
 reg        c_ack_p, c_snp_p;
 always @(posedge clk_cpu) begin
 	c_ipl_s0 <= ipl;            c_ipl_s1 <= c_ipl_s0;
-	c_win_s0 <= {cache_rom_ena, cache_slow_ena, cache_z2_ena, cache_z3_ena0, cache_z3_base0};
+	//c_win_s0 <= {cache_rom_ena, cache_slow_ena, cache_z2_ena, cache_z3_ena0, cache_z3_base0};
+	c_win_s0 <= {cache_z3_ena1, cache_z3_base1,
+	             cache_rom_ena, cache_slow_ena, cache_z2_ena, cache_z3_ena0, cache_z3_base0};
 	c_win_s1 <= c_win_s0;
 	c_ide_s0 <= ide_win;        c_ide_s1 <= c_ide_s0;
 end
@@ -352,8 +358,10 @@ ap040_pipe_tg68k_compat #(
 	.cache_z2_ena(c_win_s1[9]),
 	.cache_z3_base0(c_win_s1[7:0]),
 	.cache_z3_ena0(c_win_s1[8]),
-	.cache_z3_base1(4'd0),
-	.cache_z3_ena1(1'b0),
+	//.cache_z3_base1(4'd0),
+	//.cache_z3_ena1(1'b0),
+	.cache_z3_base1(c_win_s1[18:12]),   // Megamiga 0.7: the 32 MB Zorro III board
+	.cache_z3_ena1(c_win_s1[19]),
 	.cache_rom_ena(c_win_s1[11]),
 	.cache_slow_ena(c_win_s1[10]),
 	.data_in(16'd0),
@@ -466,7 +474,8 @@ initial fp_req = 1'b0;    // never reset: it follows the controller's fp_ack
 
 // the Fast RAM port's view of the next entry: the windows are cpu_wrapper's
 // autoconfig state (this clock), the SDRAM address is main.vhd's fram_addr_o map
-// (Zorro II: bank 1, [22:1]; Zorro III: banks 2/3, [23:1])
+// (Zorro II: bank 1, [22:1]; Zorro III: banks 2/3, [23:1]; Megamiga 0.7: the 32 MB
+// Zorro III board: the upper row halves of all banks, '1' & [24:1])
 wire        e_board = b_ent[QW-1];
 wire        e_cons  = b_ent[QW-2];
 wire        e_fill = b_ent[QE-3];
@@ -475,10 +484,14 @@ wire [31:0] e_addr = b_ent[63:32];
 wire [31:0] e_wdat = b_ent[31:0];
 wire        e_z2   = cache_z2_ena && !e_addr[31:24] && (e_addr[23] ^ |e_addr[22:21]);
 wire        e_z3   = cache_z3_ena0 && (e_addr[31:24] == cache_z3_base0);
+// Megamiga 0.7: the 32 MB Zorro III board (upper row halves of all banks: '1' & [24:1]). Every
+// line fill goes to the fp_* port, so without it a fill from this board would read Zorro II.
+wire        e_z3b  = cache_z3_ena1 && (e_addr[31:25] == cache_z3_base1);
 wire        e_fit  = (e_size == `AP040_SZ_B) ||
                      (e_size == `AP040_SZ_W && e_addr[1:0] != 2'b11) ||
                      (e_size == `AP040_SZ_L && e_addr[1:0] == 2'b00);
-wire        e_fp   = FASTRAM != 0 && !e_cons && (e_fill || ((e_z2 || e_z3) && e_fit));
+//wire        e_fp   = FASTRAM != 0 && !e_cons && (e_fill || ((e_z2 || e_z3) && e_fit));
+wire        e_fp   = FASTRAM != 0 && !e_cons && (e_fill || ((e_z2 || e_z3 || e_z3b) && e_fit));
 wire  [3:0] e_be   = (e_size == `AP040_SZ_B) ? (4'b1000 >> e_addr[1:0]) :
                      (e_size == `AP040_SZ_W) ? (4'b1100 >> e_addr[1:0]) : 4'b1111;
 wire [31:0] e_wpos = (e_size == `AP040_SZ_B) ? {4{e_wdat[7:0]}} :
@@ -552,7 +565,9 @@ always @(posedge clk) begin
 				fp_req   <= ~fp_req;
 				fp_we    <= b_ent[QE-4];
 				fp_line  <= e_fill;
-				fp_addr  <= e_z3 ? {1'b1, e_addr[23:2]} : {2'b01, e_addr[22:2]};
+				//fp_addr  <= e_z3 ? {1'b1, e_addr[23:2]} : {2'b01, e_addr[22:2]};
+				fp_addr  <= e_z3b ? {1'b1, e_addr[24:2]} :
+				            e_z3  ? {2'b01, e_addr[23:2]} : {3'b001, e_addr[22:2]};
 				fp_be    <= e_be;
 				fp_wdata <= e_wpos;
 			end
