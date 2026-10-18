@@ -160,6 +160,8 @@ module cpu_wrapper
 	input             z3bena,
 	// Megamiga, October 2026: the network card (eth_card.vhd), also on ext_*
 	input             eth_ena,         // board present in the autoconfig chain
+	// Megamiga 0.7, October 2026: the graphics card (RTG board) can be switched off
+	input             rtgena,          // RTG board in the autoconfig chain (68020/68040)
 	output            ext_eth,         // the ext_sel cycle is for the network card
 	// Megamiga 0.6.1: the shared folder memory $DD4000-$DD5FFF (share_buf.vhd), also on ext_*
 	output            ext_shr,         // the ext_sel cycle is for the shared folder memory
@@ -1272,7 +1274,8 @@ always @(posedge clk) begin : autoconfig_blk
 		ac_z3b         <= z3bena & cpucfg[1];   // Megamiga 0.7
 		z3b_configured <= 0;
 		z3b_base       <= 7'h00;
-		ac_rtgb         <= cpucfg[1];        // Megamiga: the RTG board (68020/68040)
+		//ac_rtgb         <= cpucfg[1];        // Megamiga: the RTG board (68020/68040)
+		ac_rtgb         <= cpucfg[1] & rtgena; // Megamiga 0.7: + the profile's Graphics Card
 		rtgb_configured <= 0;
 		rtgb_base       <= 9'h000;
 		z3_configured  <= 0;
