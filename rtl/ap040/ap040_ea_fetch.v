@@ -1346,7 +1346,16 @@ wire [15:0] wf_ssw  = ssw_f(wb_stf.cm, wb_fma, wb_fatm, wb_stf.lk, 1'b1, wb_st_s
 function automatic logic [7:0] wbs_f(input logic [15:0] ssw);
 	return {1'b1, ssw[6:0]};               // V, SIZE, TT, TM (Figure 8-8)
 endfunction
-wire        wf_dbl  = wb_fault && (wb_stf.exc || ph == P_EXC || ph == P_RTE || ph == P_RESET);
+// Megamiga 2026-10-19: not while an exception waits in step 5 for the older
+// instructions (nothing of its frame has gone out yet): an instruction fetch
+// fault (ID's ifault, not serialising) or a read fault enters P_EXC with an
+// older store still in EX/WB, and that store's fault halted the core.  The
+// store's access error replaces the entry (wf_go), as on the 68040; the
+// abandoned instruction faults again after the RTE.  Linux: a store to a fresh
+// page followed by a fetch from one (busybox, 2026-10-18, AE162; exctest3.S).
+// A frame store (wb_stf.exc) is still a double fault.
+//wire        wf_dbl  = wb_fault && (wb_stf.exc || ph == P_EXC || ph == P_RTE || ph == P_RESET);
+wire        wf_dbl  = wb_fault && (wb_stf.exc || (ph == P_EXC && x_step != 3'd5) || ph == P_RTE || ph == P_RESET);
 wire        wf_last = wb_last && !wb_stf.cm;      // MOVEM: CM and a restart, never WB1
 wire        wf_go   = wb_fault && !wf_dbl;
 // (audit 2026-09-27, finding 1) P_FPU too: a floating-point memory read --
