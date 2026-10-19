@@ -50,6 +50,11 @@ module ap040_execute
 	output            fw_w0_v,
 	output      [4:0] fw_w0_r,
 	output     [31:0] fw_w0_val,
+	// Megamiga 2026-10-17: the u1 port as EX writes it -- MUL.L's Dh and DIV.L's
+	// Dr are known only here, not in the micro-op's u1 (Linux, put_dec_trunc8)
+	output            fw_u1_v,
+	output      [4:0] fw_u1_r,
+	output     [31:0] fw_u1_val,
 
 	output            fw_ccr_v,
 	output      [4:0] fw_ccr,
@@ -421,6 +426,12 @@ assign fw_ccr    = w.sr_v ? w.sr_val[4:0] : w.ccr_val;
 assign fw_w0_v   = eaf_valid && w.w0_v;
 assign fw_w0_r   = w.w0_r;
 assign fw_w0_val = w.w0_val;
+
+// Megamiga 2026-10-17: w.u1 is x.u1 (an (An)+/-(An) update) except for MUL.L
+// 64 (Dh) and DIV.L with Dr != Dq (Dr), whose value is computed here
+assign fw_u1_v   = eaf_valid && w.u1_v;
+assign fw_u1_r   = w.u1_r;
+assign fw_u1_val = w.u1_val;
 
 // The redirect goes out in the micro-op's first clock here, whether or not WB
 // holds an older store (timing: st_done -- the memory's acknowledge -- must

@@ -826,6 +826,15 @@ wire [31:0] fw_w0_val;
 wire        fw_ccr_v;
 wire  [4:0] fw_ccr;
 wire ex_w0_pend = eaf_valid && (eaf_o.dk == DK_REG || eaf_o.cls == CL_DBCC || eaf_o.cls == CL_SCC);
+// Megamiga 2026-10-17: EX's own u1 result (MUL.L 64 Dh, DIV.L Dr), for EA-fetch's
+// operand forwarding; EA-calc waits for it (ex_w1_pend), as for w0. Before, both
+// saw only the micro-op's (An)+ update on u1, and an instruction right behind a
+// MUL.L Dh:Dl read the old Dh (Linux put_dec_trunc8: MULU.L #,D1:D0 / MOVE.W D1,D0).
+wire        fw_u1_v;
+wire  [4:0] fw_u1_r;
+wire [31:0] fw_u1_val;
+wire ex_w1_pend = eaf_valid && eaf_o.cls == CL_MULDIV && eaf_o.imm4[2] && (eaf_o.imm4[0] || eaf_o.imm4[3]) &&
+                  eaf_o.dr2 != eaf_o.dr;
 
 ap040_ea_calc #(.HAS_FPU(HAS_FPU)) u_eac
 (
@@ -837,6 +846,7 @@ ap040_ea_calc #(.HAS_FPU(HAS_FPU)) u_eac
 	.p_eaf_v(eac_valid), .p_eaf(eac_o), .p_eaf_blk(eaf_blk),
 	.p_ex_v(eaf_valid),
 	.p_ex_w0_v(ex_w0_pend), .p_ex_w0_r(eaf_o.dr),
+	.p_ex_w1_v(ex_w1_pend), .p_ex_w1_r(eaf_o.dr2),   // Megamiga 2026-10-17
 	.p_ex_u0_v(eaf_o.u0_v || eaf_o.sp_v), .p_ex_u0_r(eaf_o.sp_v ? eaf_o.sp_r : eaf_o.u0_r),
 	.p_ex_u0_val(eaf_o.sp_v ? eaf_o.sp_val : eaf_o.u0_val),
 	.p_ex_u1_v(eaf_o.u1_v), .p_ex_u1_r(eaf_o.u1_r), .p_ex_u1_val(eaf_o.u1_val),
@@ -865,7 +875,8 @@ ap040_ea_fetch #(.STFWD(BUS ? 0 : 1), .CAS2_DC_ORDER_020(CAS2_DC_ORDER_020), .HA
 	.ex_w0_v(fw_w0_v), .ex_w0_r(fw_w0_r), .ex_w0_val(fw_w0_val),
 	.ex_u0_v(eaf_valid && (eaf_o.u0_v || eaf_o.sp_v)), .ex_u0_r(eaf_o.sp_v ? eaf_o.sp_r : eaf_o.u0_r),
 	.ex_u0_val(eaf_o.sp_v ? eaf_o.sp_val : eaf_o.u0_val),
-	.ex_u1_v(eaf_valid && eaf_o.u1_v), .ex_u1_r(eaf_o.u1_r), .ex_u1_val(eaf_o.u1_val),
+//	.ex_u1_v(eaf_valid && eaf_o.u1_v), .ex_u1_r(eaf_o.u1_r), .ex_u1_val(eaf_o.u1_val),
+	.ex_u1_v(fw_u1_v), .ex_u1_r(fw_u1_r), .ex_u1_val(fw_u1_val),   // Megamiga 2026-10-17: EX's u1
 	.ex_ccr_v(fw_ccr_v), .ex_ccr(fw_ccr),
 	.rd_req(d_rd_req), .rd_addr(d_rd_addr), .rd_size(d_rd_size), .rd_fc(d_rd_fc), .rd_lk(d_rd_lk),
 	.rd_ack(d_rd_ack), .rd_data_raw(d_rd_data),
@@ -962,6 +973,7 @@ ap040_execute #(.HAS_FPU(HAS_FPU)) u_ex
 	.mmusr_in(mmusr), .urp_in(urp), .srp_in(srp),
 	.ex_stall(ex_stall),
 	.fw_w0_v(fw_w0_v), .fw_w0_r(fw_w0_r), .fw_w0_val(fw_w0_val),
+	.fw_u1_v(fw_u1_v), .fw_u1_r(fw_u1_r), .fw_u1_val(fw_u1_val),   // Megamiga 2026-10-17
 	.fw_ccr_v(fw_ccr_v), .fw_ccr(fw_ccr),
 	.fw_st_v(fw_st_v), .fw_st_addr(fw_st_addr), .fw_st_size(fw_st_size), .fw_st_data(fw_st_data), .fw_st_fc(fw_st_fc),
 	.fw_st_ram(stw_ram), .fw_st_pt(fw_st_pt), .fw_st_ep(pg_ep),

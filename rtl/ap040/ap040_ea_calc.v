@@ -58,6 +58,10 @@ module ap040_ea_calc
 	input             p_ex_v,     // execute stage
 	input             p_ex_w0_v,
 	input       [4:0] p_ex_w0_r,
+	// Megamiga 2026-10-17: EX holds a MUL.L 64 / DIV.L whose second result register
+	// (Dh / Dr) is not known before EX -- wait for it like for w0
+	input             p_ex_w1_v,
+	input       [4:0] p_ex_w1_r,
 	input             p_ex_u0_v, input [4:0] p_ex_u0_r, input [31:0] p_ex_u0_val,
 	input             p_ex_u1_v, input [4:0] p_ex_u1_r, input [31:0] p_ex_u1_val,
 
@@ -99,6 +103,7 @@ wire use_di = (id_i.dst.kind == EK_MEM) && id_i.dst.idx_en;
 function automatic logic [33:0] fwd(input logic [4:0] r, input logic [31:0] rf,
                                     input logic ev, input eac_t e,
                                     input logic xv, input logic xw0v, input logic [4:0] xw0r,
+                                    input logic xw1v, input logic [4:0] xw1r,   // Megamiga 2026-10-17
                                     input logic xu0v, input logic [4:0] xu0r, input logic [31:0] xu0d,
                                     input logic xu1v, input logic [4:0] xu1r, input logic [31:0] xu1d);
 	// EA-fetch stage (youngest)
@@ -108,19 +113,20 @@ function automatic logic [33:0] fwd(input logic [4:0] r, input logic [31:0] rf,
 	if (ev && e.u0_v && e.u0_r == r) return {1'b0, 1'b1, e.u0_val};
 	// execute stage
 	if (xv && xw0v && xw0r == r) return {1'b1, 1'b0, 32'd0};
+	if (xw1v && xw1r == r) return {1'b1, 1'b0, 32'd0};   // Megamiga 2026-10-17 (xw1v includes EX's valid)
 	if (xv && xu1v && xu1r == r) return {1'b0, 1'b1, xu1d};
 	if (xv && xu0v && xu0r == r) return {1'b0, 1'b1, xu0d};
 	// register file (WB write-through inside it)
 	return {1'b0, 1'b0, rf};
 endfunction
 
-wire [33:0] f_sb = fwd(r_sb, rd_sb, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r,
+wire [33:0] f_sb = fwd(r_sb, rd_sb, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r, p_ex_w1_v, p_ex_w1_r,
                        p_ex_u0_v, p_ex_u0_r, p_ex_u0_val, p_ex_u1_v, p_ex_u1_r, p_ex_u1_val);
-wire [33:0] f_si = fwd(r_si, rd_si, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r,
+wire [33:0] f_si = fwd(r_si, rd_si, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r, p_ex_w1_v, p_ex_w1_r,
                        p_ex_u0_v, p_ex_u0_r, p_ex_u0_val, p_ex_u1_v, p_ex_u1_r, p_ex_u1_val);
-wire [33:0] f_db = fwd(r_db, rd_db, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r,
+wire [33:0] f_db = fwd(r_db, rd_db, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r, p_ex_w1_v, p_ex_w1_r,
                        p_ex_u0_v, p_ex_u0_r, p_ex_u0_val, p_ex_u1_v, p_ex_u1_r, p_ex_u1_val);
-wire [33:0] f_di = fwd(r_di, rd_di, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r,
+wire [33:0] f_di = fwd(r_di, rd_di, p_eaf_v, p_eaf, p_ex_v, p_ex_w0_v, p_ex_w0_r, p_ex_w1_v, p_ex_w1_r,
                        p_ex_u0_v, p_ex_u0_r, p_ex_u0_val, p_ex_u1_v, p_ex_u1_r, p_ex_u1_val);
 
 // An older micro-op in EX that writes SR -- an exception's or RTE's last,
