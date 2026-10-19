@@ -33,6 +33,10 @@
 module rtg
 (
 	input             clk,           // clock
+	// Megamiga 0.7, October 2026: the profile's Graphics Card switch. Off: the registers
+	// ignore writes (the framebuffer cannot be switched on) and read 0 - the ID too, so
+	// the driver finds no card; the bus cycles still complete.
+	input             present,
 	input             aen,           // adress enable
 	input             rd,            // read enable
 	input             wr,            // write enable
@@ -64,7 +68,8 @@ wire r_pal = aen && (rs[11:10] == 1);
 // writing of output port
 always @(posedge clk) begin
 	if (reset) ena<=0;
-	else if(wr) begin
+	//else if(wr) begin
+	else if(wr && present) begin
 		if(r_en) begin
 			case(rs[3:1])
 				0: base[31:16] <= data_in;
@@ -86,7 +91,8 @@ end
 reg [15:0] dout;
 always @(posedge clk) begin
 	dout <= 16'h0000;
-	if(r_en) begin
+	//if(r_en) begin
+	if(r_en && present) begin
 		case(rs[3:1])
 			0: dout <= base[31:16];
 			1: dout <= base[15:0];
@@ -105,7 +111,8 @@ always @(posedge clk) begin
 			7: dout <= 16'h4D01;
 		endcase
 	end
-	if (r_pal) dout <= rs[1] ? pal_dr[15:0] : pal_dr[23:16];
+	//if (r_pal) dout <= rs[1] ? pal_dr[15:0] : pal_dr[23:16];
+	if (r_pal && present) dout <= rs[1] ? pal_dr[15:0] : pal_dr[23:16];
 end
 
 reg [2:0] rd_r;
