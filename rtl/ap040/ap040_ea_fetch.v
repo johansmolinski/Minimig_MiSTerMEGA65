@@ -2396,8 +2396,21 @@ assign rd_fc     = (st.issue && (ph == P_START || ph == P_OPS) && i.fcsel == 2'd
 wire   redir_cls = eac_v_use && ((i.cls == CL_BCC && i.cond != 4'h0) || i.cls == CL_DBCC ||
                                  i.cls == CL_RTS || i.cls == CL_RTD || i.cls == CL_RTR ||
                                  ((i.cls == CL_JMP || i.cls == CL_JSR) && !eac_i.redirected));
+// Megamiga 2026-10-18: nor while this stage takes an exception, an RTE or the
+// reset: the instruction in EA-calc is on a wrong path then (the exception or
+// RTE redirects), and every read of these phases gets supervisor data FC 5
+// (rd_fc), so its user address went through the supervisor table.  Linux has
+// no user mapping there: a store's access fault taken while EA-calc held the
+// next instruction (`wf_go`: this stage empty, so `!eac_v_use` let the early
+// read out) read that instruction's operand with FC 5, the read faulted, and
+// a fault in exception entry halts the core (aerr_dbl) -- busybox's first
+// bss store after exec stopped the machine (ILA, 2026-10-18).
+//wire   use_early = early_v && early.v && !st.issue && (!rd_pend || rd_ack) &&
+//                   (st.fin || !eac_v_use) && !rst_pending &&
+//                   !redir_cls && !((REDIR_REG != 0) && rdz_v);
 wire   use_early = early_v && early.v && !st.issue && (!rd_pend || rd_ack) &&
                    (st.fin || !eac_v_use) && !rst_pending &&
+                   ph != P_EXC && ph != P_RTE && ph != P_RESET && ph != P_HALT &&
                    !redir_cls && !((REDIR_REG != 0) && rdz_v);
 // An armed interrupt holds back only the reads it can be taken in front of:
 // the instruction still at P_START (irq_go fires only there, or in P_STOP,
@@ -2589,7 +2602,10 @@ always @(posedge clk) begin
 			x7[14] <= (wf_last && wb_stf.m16) ? m16_buf[3] : 32'd0;               // PD3
 			bf_step <= 1'b0; mm_have <= 1'b0; mm_empty <= 1'b0; mm_tail <= 1'b0;
 			done_smi <= 1'b0; done_dmi <= 1'b0; done_sld <= 1'b0; done_dld <= 1'b0;
-			if (rd_pend && !rd_ack) rd_drop <= 1'b1;
+			// (Megamiga 2026-10-18) an early read going out in this very clock
+			// belongs to an abandoned instruction too
+//			if (rd_pend && !rd_ack) rd_drop <= 1'b1;
+			if ((rd_pend && !rd_ack) || rd_req) rd_drop <= 1'b1;
 		end else if (flush) begin
 			ph <= P_START; bf_step <= 1'b0; mm_have <= 1'b0; mm_empty <= 1'b0; mm_tail <= 1'b0;
 			fp_req <= 1'b0;
