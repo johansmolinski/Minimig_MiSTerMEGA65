@@ -2561,14 +2561,29 @@ always @(posedge clk) begin
 			// write pending in WB1) the trace survives as SSW CT and the RTE
 			// takes it; a restart re-arms it by itself.
 			tr_take <= 1'b0;
-			x7[3] <= {wf_ssw | ((tr_take && wf_last) ? 16'h2000 : 16'h0000), 16'h0000};   // SSW (CT), WB3S
-			x7[4] <= {16'h0000, 8'h00, wf_last ? wbs_f(wf_ssw) : 8'h00};          // WB2S, WB1S
+			// Megamiga 2026-10-17: a completed store's pending write is reported in
+			// WB3, not WB1 -- as the 68040 does (WinUAE; the reference core's WB3A/
+			// WB3D slot; NetBSD trap.c "we have to write the value out to memory
+			// ourselves").  Linux's access_error040() completes only WB2/WB3 (WB1 is
+			// a push), so the store was lost: every first write to a page in user
+			// space (demand-zero bss, exec) vanished.  MOVE16 keeps WB1 + PD0-PD3.
+//			x7[3] <= {wf_ssw | ((tr_take && wf_last) ? 16'h2000 : 16'h0000), 16'h0000};   // SSW (CT), WB3S
+//			x7[4] <= {16'h0000, 8'h00, wf_last ? wbs_f(wf_ssw) : 8'h00};          // WB2S, WB1S
+//			x7[5] <= wb_st_a;                                                     // FA
+//			x7[6] <= wf_last ? 32'd0 : wb_st_a;                                   // WB3A
+//			x7[7] <= wf_last ? 32'd0 : wb_st_d;                                   // WB3D
+//			x7[8] <= 32'd0; x7[9] <= 32'd0;                                       // WB2A, WB2D
+//			x7[10] <= wf_last ? wb_st_a : 32'd0;                                  // WB1A
+//			x7[11] <= !wf_last ? 32'd0 : wb_stf.m16 ? m16_buf[0] : wb_st_d;       // WB1D / PD0
+			x7[3] <= {wf_ssw | ((tr_take && wf_last) ? 16'h2000 : 16'h0000),
+			          (wf_last && !wb_stf.m16) ? {8'h00, wbs_f(wf_ssw)} : 16'h0000};       // SSW (CT), WB3S
+			x7[4] <= {16'h0000, 8'h00, (wf_last && wb_stf.m16) ? wbs_f(wf_ssw) : 8'h00};   // WB2S, WB1S
 			x7[5] <= wb_st_a;                                                     // FA
-			x7[6] <= wf_last ? 32'd0 : wb_st_a;                                   // WB3A
-			x7[7] <= wf_last ? 32'd0 : wb_st_d;                                   // WB3D
+			x7[6] <= wb_st_a;                                                     // WB3A
+			x7[7] <= wb_st_d;                                                     // WB3D
 			x7[8] <= 32'd0; x7[9] <= 32'd0;                                       // WB2A, WB2D
-			x7[10] <= wf_last ? wb_st_a : 32'd0;                                  // WB1A
-			x7[11] <= !wf_last ? 32'd0 : wb_stf.m16 ? m16_buf[0] : wb_st_d;       // WB1D / PD0
+			x7[10] <= (wf_last && wb_stf.m16) ? wb_st_a : 32'd0;                  // WB1A
+			x7[11] <= (wf_last && wb_stf.m16) ? m16_buf[0] : 32'd0;               // WB1D / PD0
 			x7[12] <= (wf_last && wb_stf.m16) ? m16_buf[1] : 32'd0;               // PD1
 			x7[13] <= (wf_last && wb_stf.m16) ? m16_buf[2] : 32'd0;               // PD2
 			x7[14] <= (wf_last && wb_stf.m16) ? m16_buf[3] : 32'd0;               // PD3
