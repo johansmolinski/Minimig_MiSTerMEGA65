@@ -3128,7 +3128,13 @@ always @(posedge clk) begin
 				            !st.irq && st.ev == i.exc_vec && !wf_go && !ldx_err_go;
 				x_fia_pc <= i.pc;
 				x_step <= 3'd5;
-				x_irq  <= st.irq; x_lvl <= irq_lvl;
+				// (Megamiga 2026-10-27) the new mask is the level the vector
+				// was taken for (irq_take_lvl, registered: irq_st's input), not
+				// the live one: a request withdrawn or raised in exactly this
+				// clock gave the handler mask 0 -- it nested at its own level --
+				// or a higher level's mask
+//				x_irq  <= st.irq; x_lvl <= irq_lvl;
+				x_irq  <= st.irq; x_lvl <= irq_take_lvl;
 			end
 			if (st.disp && st.dsel == 3'd0 && two_uop && !st.fin) bf_step <= 1'b1;
 			// MOVEM
