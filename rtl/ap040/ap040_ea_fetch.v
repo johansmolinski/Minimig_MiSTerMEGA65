@@ -2615,11 +2615,31 @@ always @(posedge clk) begin
 			// belongs to an abandoned instruction too
 //			if (rd_pend && !rd_ack) rd_drop <= 1'b1;
 			if ((rd_pend && !rd_ack) || rd_req) rd_drop <= 1'b1;
+			// (MegaMac 2026-10-26) the RELEASED FP operation does not stop for a
+			// fault behind it: its `done` and its exception are taken here as
+			// in the normal path below, see there
+			if (HAS_FPU != 0 && fp_bg && fp_done) fp_bg <= 1'b0;
+			fp_pcap <= 1'b0;
+			if (HAS_FPU != 0 && fp_exc_req && fp_bg) begin
+				fp_bg <= 1'b0; fp_pend <= 1'b1; fp_pvec <= fp_exc_vec; fp_pcap <= 1'b1;
+			end
 		end else if (flush) begin
 			ph <= P_START; bf_step <= 1'b0; mm_have <= 1'b0; mm_empty <= 1'b0; mm_tail <= 1'b0;
 			fp_req <= 1'b0;
 			done_smi <= 1'b0; done_dmi <= 1'b0; done_sld <= 1'b0; done_dld <= 1'b0;
 			if (rd_pend && !rd_ack) rd_drop <= 1'b1;
+			// (MegaMac 2026-10-26) a RELEASED FP operation's `done` in a flush
+			// clock: an interrupt's entry redirects EX, and this branch used to
+			// skip the clause below that clears fp_bg, so a 28-clock FDIV whose
+			// `done` landed in that one clock left fp_bg set for ever and the
+			// next FP instruction waited at P_START for good (MacBench's FP
+			// test and CPU Info's FDIV loop on the Mac: tb_fdiv_irq.sv, the
+			// hang at an interrupt every 61 clocks).  Its exception likewise.
+			if (HAS_FPU != 0 && fp_bg && fp_done) fp_bg <= 1'b0;
+			fp_pcap <= 1'b0;
+			if (HAS_FPU != 0 && fp_exc_req && fp_bg) begin
+				fp_bg <= 1'b0; fp_pend <= 1'b1; fp_pvec <= fp_exc_vec; fp_pcap <= 1'b1;
+			end
 		end else begin
 			if (cap) begin
 				case (rd_tag)
