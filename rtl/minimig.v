@@ -298,6 +298,9 @@ module minimig
 	input         cart_ar3,
 	input         cart_freeze,
 	output        cart_ovl,
+	// Megamiga, November 2026 (R3): the Kickstart overlay (ovl below) for cpu_wrapper's
+	// kick_ram, which reads the Kickstart from HyperRAM instead of the chip bus
+	output        kick_ovl,
 	output  [5:0] ide_req,
 	input   [4:0] ide_address,
 	input         ide_write,
@@ -1012,6 +1015,7 @@ always @(posedge clk) begin
 	if(~_cpu_reset | ~_cpu_reset_in)       ovl <= 1;
 	else if(sel_cia_a & (cpu_lwr|cpu_hwr)) ovl <= 0;
 end
+assign kick_ovl = ovl;    // Megamiga, November 2026 (R3)
 
 //-------------------------------------------------------------------------------------
 

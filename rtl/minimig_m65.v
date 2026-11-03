@@ -90,6 +90,7 @@ module minimig_m65
 	input         cart_ar3,       // Action Replay III plugged in (and its ROM loaded)
 	input         cart_freeze,    // the cartridge's freeze button (level)
 	output        cart_ovl,       // AR3 chip RAM overlay on (to cpu_wrapper)
+	output        kick_ovl,       // Megamiga, November 2026 (R3): the Kickstart overlay (to cpu_wrapper)
 
 	// MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: physical-drive support -
 	// the MEGA65's real internal floppy as an Amiga drive unit (main.vhd /
@@ -307,6 +308,7 @@ minimig minimig_inst
 	.cart_ar3      (cart_ar3     ),
 	.cart_freeze   (cart_freeze  ),
 	.cart_ovl      (cart_ovl     ),
+	.kick_ovl      (kick_ovl     ),
 	.ide_req       (             ),
 	.ide_address   (5'b0         ),
 	.ide_write     (1'b0         ),

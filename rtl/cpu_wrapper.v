@@ -189,6 +189,12 @@ module cpu_wrapper
 	output reg [23:0] dbg_stall,
 	// Megamiga, October 2026 (CPU040): 512 KB Slow RAM at $C00000 (the 68040 caches it)
 	input             slowram_ena,
+	// Megamiga, November 2026 (R3, no SDRAM): kick_ram = 1 sends every Kickstart read - and
+	// the Kickstart overlay at $000000-$07FFFF while kick_ovl (Minimig's ovl) is on - through
+	// the ram* port for EVERY CPU, the 68000 too, as bank $F8 (ramaddr[22:19] = 1111): the
+	// parent serves it from HyperRAM, the chip bus never sees the Kickstart. Static (board).
+	input             kick_ram,
+	input             kick_ovl,
 	// Megamiga, October 2026 (CPU040 = 2, CPU040_FASTRAM = 1): the 68040's Fast RAM port
 	// into sdram_ctrl (see ap040_island.v); fp_addr is the SDRAM long address
 	output            fp_req,
@@ -242,7 +248,10 @@ module cpu_wrapper
 // Megamiga, October 2026 (CPU040): the select inside this module is ramsel_i; the
 // port drops for the clock in which the AP68040 path holds a registered RAM answer
 // (ram_hold, see g_ap040), always 0 for TG68K and fx68k
-wire ramsel_i       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
+// Megamiga, November 2026 (R3): + sel_kick_hr (see kick_ram). Original:
+//wire ramsel_i       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg);
+wire sel_kick_hr;
+wire ramsel_i       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_rtg | sel_kick_hr);
 wire ram_hold;
 assign ramsel       = ramsel_i & ~ram_hold;
 assign ramshared    = 1'b0;
@@ -318,6 +327,10 @@ wire sel_rtg    = (cpu_addr[31:24] == 8'h02) | (sel_rtgb & ~cpu_addr[22]);
 // minimig_sram_bridge.v ([22:19] = 1111), i.e. the SDRAM words the Kickstart loader wrote
 wire sel_kickram   = !cpu_addr[31:24] && (&cpu_addr[23:19]) && ckick && wr;	// $f8xxxx
 wire sel_kicklower = !cpu_addr[31:24] && (cpu_addr[23:18] == 6'b111110);
+// Megamiga, November 2026 (R3): the Kickstart in HyperRAM for every CPU - reads of $F80000-
+// $FFFFFF, and of $000000-$07FFFF while the overlay is on (gary.v sel_kick)
+assign sel_kick_hr = kick_ram && !cpu_addr[31:24] && wr &&
+                     ((&cpu_addr[23:19]) || (kick_ovl && cpu_addr[23:19] == 5'b00000));
 wire sel_chipram   = !cpu_addr[31:21] && cchip; 		             //$000000 - $1FFFFF
 
 // we route everything hrtmon related through cart.v (needs a couple of signals to
@@ -391,7 +404,10 @@ assign ramaddr[26]    = sel_rtg;
 assign ramaddr[25]    = sel_z3ram32;
 assign ramaddr[24]    = sel_z3ram32 & cpu_addr[24];
 assign ramaddr[23]    = (sel_z3ram16 | sel_z3ram32) & cpu_addr[23];
-assign ramaddr[22:19] = cpu_addr[22:19];
+// Megamiga, November 2026 (R3): the overlay reads as bank $F8 (minimig_sram_bridge.v maps
+// "f8-ff or ovl" the same way). Original:
+//assign ramaddr[22:19] = cpu_addr[22:19];
+assign ramaddr[22:19] = sel_kick_hr ? 4'b1111 : cpu_addr[22:19];
 assign ramaddr[18]    = (sel_kicklower & bootrom) | cpu_addr[18];
 assign ramaddr[17:1]  = cpu_addr[17:1];
 
