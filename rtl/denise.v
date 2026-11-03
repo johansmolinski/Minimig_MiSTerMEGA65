@@ -256,7 +256,10 @@ end
 
 // BPLCON4 values are delayed for 1 lores pixel - TODO double-check this!
 // AMR - bplxor is active from first write to BPL1DAT until DIWSTOP. (Fixes Andromeda: Nexus 7, shade cluster part)
-always @ (posedge clk) begin
+// Megamiga, November 2026: the block is named (bplxor_blk) - Vivado accepts the
+// local reg declaration of upstream c1f14c3 only in a NAMED block in Verilog mode.
+//always @ (posedge clk) begin
+always @ (posedge clk) begin : bplxor_blk
   // Megamiga, November 2026: denise: keep BPLAM up to the last pixel of the window -
   // backported from upstream MiSTer commit c1f14c3.
   reg [1:0] diwstop_d;
