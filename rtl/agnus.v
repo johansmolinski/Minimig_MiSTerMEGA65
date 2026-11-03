@@ -66,6 +66,8 @@ module agnus
 	input   [8:1] address_in,      // 256 words (512 bytes) adress input,
 	output reg [20:1] address_out, // chip address output,
 	output  [8:1] reg_address_out, // 256 words (512 bytes) register address out,
+	// Megamiga, November 2026: agnus: export bitplane fetch provenance - backported from
+	// upstream MiSTer commit cfcc0dc.
 	output        bitplane_dma,
 	output reg    bitplane_fetch_phase,
 	output reg    bitplane_fetch_phase_valid,
@@ -90,6 +92,8 @@ module agnus
 	output        harddis,
 	output        varbeamen,
 	output        int3,            // blitter finished interrupt (to Paula)
+	// Megamiga, November 2026: Fix blitter (Deep Core CD32 background) - backported from
+	// upstream MiSTer commit 8813609.
 	output        blit_nasty,
 	input   [3:0] audio_dmal,      // audio dma data transfer request (from Paula)
 	input   [3:0] audio_dmas,      // audio dma location pointer restart (from Paula)
@@ -205,6 +209,9 @@ begin
 		reg_address = reg_address_cop;
 		dbwe = 0;
 	end
+	// Megamiga, November 2026: agnus: the final D write of a blit before the CPU with AGA
+	// - backported from upstream MiSTer commit 6e84afe. Original:
+	//else if (dma_blt && bls_cnt!=BLS_CNT_MAX) begin
 	else if (dma_blt && (bls_cnt!=BLS_CNT_MAX || aga && blit_flush)) begin
 		// bus allocated to blitter
 		cpu_custom = 0;
@@ -265,6 +272,9 @@ wire spren  = dmacon[5] & dmacon[9];
 wire ena_cop = ~dma_bpl;
 //dma enable for blitter tells the blitter that no higher priority dma channel is using the bus
 //since blitter has the lowest priority and can use any dma slot (even and odd) all other dma channels block blitter activity
+// Megamiga, November 2026: agnus: the final D write of a blit before the CPU with AGA -
+// backported from upstream MiSTer commit 6e84afe. Original:
+//wire ena_blt = ~(dma_ref | dma_dsk | dma_aud | dma_spr | dma_bpl | dma_cop) && bls_cnt!=BLS_CNT_MAX ? 1'b1 : 1'b0;
 wire ena_blt = ~(dma_ref | dma_dsk | dma_aud | dma_spr | dma_bpl | dma_cop) && (bls_cnt!=BLS_CNT_MAX || aga && blit_flush) ? 1'b1 : 1'b0;
 
 //--------------------------------------------------------------------------------------
@@ -323,6 +333,8 @@ agnus_audiodma aud1
 //--------------------------------------------------------------------------------------
 
 wire        dma_bpl;         //bitplane dma engine uses it's slot
+// Megamiga, November 2026: agnus: export bitplane fetch provenance - backported from
+// upstream MiSTer commit cfcc0dc.
 assign bitplane_dma = dma_bpl;
 
 always @(posedge clk) begin
@@ -343,6 +355,8 @@ end
 
 wire [20:1] address_bpl;     //bitplane dma engine chip address out
 wire  [8:1] reg_address_bpl; //bitplane dma engine register address out
+// Megamiga, November 2026: agnus: export bitplane fetch provenance - backported from
+// upstream MiSTer commit cfcc0dc.
 assign bitplane_fetch_unit_start = clk7_en && hpos[0] && (reg_address_bpl == 8'h8F);
 
 //instantiate bitplane dma
@@ -430,6 +444,9 @@ always @(posedge clk) if (clk7_en) begin
 end
 
 wire        blit_busy;       //blitter busy status
+// Megamiga, November 2026: Fix blitter (Deep Core CD32 background); agnus: the final D
+// write of a blit before the CPU with AGA - backported from upstream MiSTer commits
+// 8813609, 6e84afe.
 wire        blit_active;
 wire        blit_flush;
 wire        blit_zero;       //blitter zero status
@@ -453,6 +470,9 @@ agnus_blitter bl1
 	.we(we_blt),
 	.zero(blit_zero),
 	.busy(blit_busy),
+	// Megamiga, November 2026: Fix blitter (Deep Core CD32 background); agnus: the final D
+	// write of a blit before the CPU with AGA - backported from upstream MiSTer commits
+	// 8813609, 6e84afe.
 	.active(blit_active),
 	.flush(blit_flush),
 	.int3(int3),
@@ -463,6 +483,8 @@ agnus_blitter bl1
 	.reg_address_out(reg_address_blt)
 );
 
+// Megamiga, November 2026: Fix blitter (Deep Core CD32 background) - backported from
+// upstream MiSTer commit 8813609.
 assign blit_nasty = bltpri & blten & blit_active;
 
 //--------------------------------------------------------------------------------------

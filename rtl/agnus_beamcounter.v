@@ -106,6 +106,8 @@ parameter VBSTOP_NTSC_VAL = 9'd20;           // vertical blanking end (PAL 26 li
 
 //--------------------------------------------------------------------------------------
 
+// Megamiga, November 2026: agnus: delay vertical beam readback by one colour clock -
+// backported from upstream MiSTer commit 2764b51.
 reg [10:0] vpos_rb;
 reg [10:0] vpos_d1;
 always @(posedge clk) begin
@@ -118,12 +120,18 @@ end
 //beamcounter read registers VPOSR and VHPOSR
 always @(*) begin
 	if (reg_address_in[8:1]==VPOSR[8:1] || reg_address_in[8:1]==VPOSW[8:1])
+		// Megamiga, November 2026: agnus: delay vertical beam readback by one colour clock -
+		// backported from upstream MiSTer commit 2764b51. Original:
+		//data_out[15:0] = {long_frame,1'b0,ecs,ntsc,2'b00,{2{aga}},long_line,4'b0000,vpos[10:8]};
 		data_out[15:0] = {long_frame,1'b0,ecs,ntsc,2'b00,{2{aga}},long_line,4'b0000,vpos_rb[10:8]};
 	else if (reg_address_in[8:1]==VHPOSR[8:1] || reg_address_in[8:1]==VHPOSW[8:1])
 		// MiSTer2MEGA65 (AExp Amiga 500 port), October 2026: VHPOSR reads one colour
 		// clock behind the internal counter, as a real Agnus does - backported from
 		// upstream MiSTer commit 06f30af (PR #234). Original:
 		//data_out[15:0] = {vpos[7:0],hpos[8:1]};
+		// Megamiga, November 2026: agnus: delay vertical beam readback by one colour clock -
+		// backported from upstream MiSTer commit 2764b51. Original:
+		//data_out[15:0] = {vpos[7:0],|hpos[8:1] ? hpos[8:1] - 8'd1 : ersy ? 8'd0 : htotal[8:1]};
 		data_out[15:0] = {vpos_rb[7:0],|hpos[8:1] ? hpos[8:1] - 8'd1 : ersy ? 8'd0 : htotal[8:1]};
 	else
 		data_out[15:0] = 0;
@@ -194,8 +202,13 @@ reg [ 8:0] htotal_reg;
 reg [ 8:0] hsstrt_reg;
 reg [ 8:0] hsstop_reg;
 reg [ 8:0] hcenter_reg;
+// Megamiga, November 2026: agnus: keep the fine bits of HBSTRT and HBSTOP - backported
+// from upstream MiSTer commit 430209e. Original:
+//reg [ 8:0] hbstrt_reg; // not correct size, this should have [10:0]
 reg [ 8:0] hbstrt_reg;
 reg [ 8:0] hbstop_reg;
+// Megamiga, November 2026: agnus: keep the fine bits of HBSTRT and HBSTOP - backported
+// from upstream MiSTer commit 430209e.
 reg [ 1:0] hbstrt_lo;
 reg [ 1:0] hbstop_lo;
 reg [10:0] vtotal_reg;
@@ -213,6 +226,8 @@ always @ (posedge clk) begin
 			hcenter_reg <= HCENTER_VAL[8:0];
 			hbstrt_reg  <= HBSTRT_VAL[8:0];
 			hbstop_reg  <= HBSTOP_VAL[8:0];
+			// Megamiga, November 2026: agnus: keep the fine bits of HBSTRT and HBSTOP -
+			// backported from upstream MiSTer commit 430209e.
 			hbstrt_lo   <= 2'b00;
 			hbstop_lo   <= 2'b00;
 			vtotal_reg  <= pal ? VTOTAL_PAL_VAL : VTOTAL_NTSC_VAL;
@@ -226,6 +241,10 @@ always @ (posedge clk) begin
 				HSSTRT [8:1] : hsstrt_reg  <= {data_in[ 7:0], 1'b0};
 				HSSTOP [8:1] : hsstop_reg  <= {data_in[ 7:0], 1'b0};
 				HCENTER[8:1] : hcenter_reg <= {data_in[ 7:0], 1'b0};
+				// Megamiga, November 2026: agnus: keep the fine bits of HBSTRT and HBSTOP -
+				// backported from upstream MiSTer commit 430209e. Original:
+				//HBSTRT [8:1] : hbstrt_reg  <= {data_in[ 7:0], 1'b0}; // TODO fix this
+				//HBSTOP [8:1] : hbstop_reg  <= {data_in[ 7:0], 1'b0};
 				HBSTRT [8:1] : {hbstrt_reg, hbstrt_lo} <= {data_in[7:0], aga ? data_in[10:8] : 3'b000};
 				HBSTOP [8:1] : {hbstop_reg, hbstop_lo} <= {data_in[7:0], aga ? data_in[10:8] : 3'b000};
 				VTOTAL [8:1] : vtotal_reg  <= {data_in[10:0]};
@@ -245,6 +264,8 @@ wire [ 8:0] hsstop  = varhsyen && varbeamen ? hsstop_reg  : HSSTOP_VAL[8:0];
 wire [ 8:0] hcenter = varhsyen && varbeamen ? hcenter_reg : HCENTER_VAL[8:0];
 wire [ 8:0] hbstrt  =             varbeamen ? hbstrt_reg  : HBSTRT_VAL[8:0];
 wire [ 8:0] hbstop  =             varbeamen ? hbstop_reg  : HBSTOP_VAL[8:0];
+// Megamiga, November 2026: agnus: keep the fine bits of HBSTRT and HBSTOP - backported
+// from upstream MiSTer commit 430209e.
 wire [ 1:0] hbstrt_f =            varbeamen ? hbstrt_lo   : 2'b00;
 wire [ 1:0] hbstop_f =            varbeamen ? hbstop_lo   : 2'b00;
 wire [10:0] vtotal  =             varbeamen ? vtotal_reg  : pal ? VTOTAL_PAL_VAL : VTOTAL_NTSC_VAL;
@@ -460,11 +481,22 @@ assign vbl = (vpos <= vbstop);
 assign vblend = vpos==vbstop;
 
 //composite display blanking
+// Megamiga, November 2026: agnus: keep the fine bits of HBSTRT and HBSTOP - backported
+// from upstream MiSTer commit 430209e.
 reg  [2:0] hbs_d, hbe_d;
 wire [3:0] hbs_s = {hbs_d, clk7_en && hpos==hbstrt};
 wire [3:0] hbe_s = {hbe_d, clk7_en && hpos==hbstop};
 
 always @(posedge clk) begin
+	// Megamiga, November 2026: agnus: keep the fine bits of HBSTRT and HBSTOP - backported
+	// from upstream MiSTer commit 430209e. Original:
+	//if (clk7_en) begin
+	//	if (hpos==hbstrt)//start of blanking (active line=51.88us)
+	//		hblank <= 1;
+	//	else if (hpos==hbstop) begin //end of blanking (back porch=5.78us)
+	//		vblank <= vbl;
+	//		hblank <= 0;
+	//	end
 	hbs_d <= hbs_s[2:0];
 	hbe_d <= hbe_s[2:0];
 	if (hbs_s[hbstrt_f])       //start of blanking (active line=51.88us)

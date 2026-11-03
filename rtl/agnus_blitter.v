@@ -90,6 +90,9 @@ module agnus_blitter
 	output	reg zero,					// blitter zero status
 	output	reg busy,					// blitter busy status
 	output	int3,						// blitter finish interrupt request
+	// Megamiga, November 2026: Fix blitter (Deep Core CD32 background); agnus: the final D
+	// write of a blit before the CPU with AGA - backported from upstream MiSTer commits
+	// 8813609, 6e84afe.
 	output	active,
 	output	flush,
 	input 	[15:0] data_in,	    		// bus data in
@@ -551,6 +554,9 @@ always @(posedge clk)
 
 // blitter finish interrupt request
 assign int3 = done;
+// Megamiga, November 2026: Fix blitter (Deep Core CD32 background); agnus: the final D
+// write of a blit before the CPU with AGA - backported from upstream MiSTer commits
+// 8813609, 6e84afe.
 assign active = (busy | |blt_state) & (blt_state != BLT_FROZEN);
 assign flush = blt_state == BLT_E || blt_state == BLT_F;
 

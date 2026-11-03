@@ -37,6 +37,8 @@ module denise_bitplanes
   input   hires,             // high resolution mode select
   input   shres,             // super high resolution mode select
   input  [8:0] hpos,        // horizontal position (70ns resolution)
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed.
   input   strhor,
   input   bitplane_dma,
   input   bitplane_fetch_phase,
@@ -97,8 +99,26 @@ always @(hpos)
     2'b11 : extra_delay_f0 = 8'b00_0100_00;
   endcase
 
+// Megamiga, November 2026: Fix Denise (scrolling on Turrican 2 AGA) - backported from
+// upstream MiSTer commit f3ab2c1. Original:
+//always @(hpos)
+//  case (hpos[4:3])
+//    2'b00 : extra_delay_f12 = 8'b00_0000_00;
+//    2'b01 : extra_delay_f12 = 8'b01_1000_00;
+//    2'b10 : extra_delay_f12 = 8'b01_0000_00;
+//    2'b11 : extra_delay_f12 = 8'b00_1000_00;
+//  endcase
 always @(hpos) extra_delay_f12 = {1'b0, 3'd0 - hpos[4:2], 4'b0000};
 
+// Megamiga, November 2026: Fix Denise (scrolling on Turrican 2 AGA) - backported from
+// upstream MiSTer commit f3ab2c1. Original:
+//always @(hpos)
+//  case (hpos[5:4])
+//    2'b00 : extra_delay_f3 = 8'b00_0000_00;
+//    2'b01 : extra_delay_f3 = 8'b11_0000_00;
+//    2'b10 : extra_delay_f3 = 8'b10_0000_00;
+//    2'b11 : extra_delay_f3 = 8'b01_0000_00;
+//  endcase
 always @(hpos) extra_delay_f3 = {4'd0 - hpos[5:2], 4'b0000};
 
 always @ (posedge clk) begin
@@ -110,6 +130,9 @@ end
 //playfield 1 effective horizontal scroll
 always @(posedge clk)
   if (clk7_en) begin
+    // Megamiga, November 2026: denise: apply OCS/ECS BPLCON1 writes to live scroll
+    // state - backported from upstream MiSTer commit 7f93ed1. Original:
+    //if (load)
     if (!aga && (reg_address_in[8:1] == BPLCON1[8:1]))
       pf1h <= {2'b11,data_in[3:0],2'b11};
     else if (load)
@@ -124,6 +147,9 @@ always @(posedge clk)
 //playfield 2 effective horizontal scroll
 always @(posedge clk)
   if (clk7_en) begin
+    // Megamiga, November 2026: denise: apply OCS/ECS BPLCON1 writes to live scroll
+    // state - backported from upstream MiSTer commit 7f93ed1. Original:
+    //if (load)
     if (!aga && (reg_address_in[8:1] == BPLCON1[8:1]))
       pf2h <= {2'b11,data_in[7:4],2'b11};
     else if (load)
@@ -258,6 +284,9 @@ end
 //generate load signal when plane 1 is written
 always @(posedge clk) if (clk7_en) load <= reg_address_in[8:1] == BPL1DAT[8:1];
 
+// Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership; denise:
+// simplify OCS LORES fetch ownership state - backported from upstream MiSTer commits
+// 3c8a0ed, 3c5d2ea.
 wire ocs_lores_fmode0 = !aga && !hires && !shres && (fmode[1:0] == 2'b00);
 wire ocs_bplcon1_write = clk7_en && (reg_address_in[8:1] == BPLCON1[8:1]);
 wire [7:0] ocs_bplcon1_effective = ocs_bplcon1_write ? data_in[7:0] : bplcon1[7:0];
@@ -524,6 +553,9 @@ denise_bitplane_shifter bplshft1
   .aga(aga),
   .data_in(bpl1dat),
   .scroll(pf1h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[1])
   .out(legacy_bpldata[1])
 );
 
@@ -541,6 +573,9 @@ denise_bitplane_shifter bplshft2
   .aga(aga),
   .data_in(bpl2dat),
   .scroll(pf2h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[2])
   .out(legacy_bpldata[2])
 );
 
@@ -557,6 +592,9 @@ denise_bitplane_shifter bplshft3
   .aga(aga),
   .data_in(bpl3dat),
   .scroll(pf1h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[3])
   .out(legacy_bpldata[3])
 );
 
@@ -573,6 +611,9 @@ denise_bitplane_shifter bplshft4
   .aga(aga),
   .data_in(bpl4dat),
   .scroll(pf2h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[4])
   .out(legacy_bpldata[4])
 );
 
@@ -589,6 +630,9 @@ denise_bitplane_shifter bplshft5
   .aga(aga),
   .data_in(bpl5dat),
   .scroll(pf1h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[5])
   .out(legacy_bpldata[5])
 );
 
@@ -605,6 +649,9 @@ denise_bitplane_shifter bplshft6
   .aga(aga),
   .data_in(bpl6dat),
   .scroll(pf2h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[6])
   .out(legacy_bpldata[6])
 );
 
@@ -621,6 +668,9 @@ denise_bitplane_shifter bplshft7
   .aga(aga),
   .data_in(bpl7dat),
   .scroll(pf1h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[7])
   .out(legacy_bpldata[7])
 );
 
@@ -637,10 +687,15 @@ denise_bitplane_shifter bplshft8
   .aga(aga),
   .data_in(bpl8dat),
   .scroll(pf2h_del),
+  // Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+  // backported from upstream MiSTer commit 3c8a0ed. Original:
+  //.out(bpldata[8])
   .out(legacy_bpldata[8])
 );
 
 
+// Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+// backported from upstream MiSTer commit 3c8a0ed.
 assign bpldata = use_ocs_pending_stream ? ocs_bpldata : legacy_bpldata;
 
 endmodule

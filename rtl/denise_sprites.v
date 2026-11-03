@@ -127,6 +127,8 @@ denise_sprites_shifter sps0
   .aen(selspr0),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),
@@ -146,6 +148,8 @@ denise_sprites_shifter sps1
   .aen(selspr1),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),
@@ -165,6 +169,8 @@ denise_sprites_shifter sps2
   .aen(selspr2),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),
@@ -184,6 +190,8 @@ denise_sprites_shifter sps3
   .aen(selspr3),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),
@@ -203,6 +211,8 @@ denise_sprites_shifter sps4
   .aen(selspr4),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),
@@ -222,6 +232,8 @@ denise_sprites_shifter sps5
   .aen(selspr5),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),
@@ -241,6 +253,8 @@ denise_sprites_shifter sps6
   .aen(selspr6),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),
@@ -260,6 +274,8 @@ denise_sprites_shifter sps7
   .aen(selspr7),
   .address(reg_address_in[2:1]),
   .hpos(hpos),
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   .aga(aga),
   .fmode(fmode),
   .shift(shift),

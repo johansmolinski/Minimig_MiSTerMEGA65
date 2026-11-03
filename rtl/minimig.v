@@ -332,6 +332,8 @@ wire [22:1] ram_address_br;
 //local signals for address bus
 wire [23:1] cpu_address_out;	//cpu address out
 wire [20:1] dma_address_out;	//agnus address out
+// Megamiga, November 2026: agnus: export bitplane fetch provenance - backported from
+// upstream MiSTer commit cfcc0dc.
 wire        bitplane_dma;
 wire        bitplane_fetch_phase;
 wire        bitplane_fetch_phase_valid;
@@ -479,6 +481,8 @@ assign ide_fast = ~ide_config[5] & cpucfg[1];
 
 //--------------------------------------------------------------------------------------
 
+// Megamiga, November 2026: Fix blitter (Deep Core CD32 background) - backported from
+// upstream MiSTer commit 8813609.
 wire        blit_nasty;
 
 //instantiate agnus
@@ -497,6 +501,8 @@ agnus AGNUS1
 	.address_in(cpu_address_out[8:1]),
 	.address_out(dma_address_out),
 	.reg_address_out(reg_address),
+	// Megamiga, November 2026: agnus: export bitplane fetch provenance - backported from
+	// upstream MiSTer commit cfcc0dc.
 	.bitplane_dma(bitplane_dma),
 	.bitplane_fetch_phase(bitplane_fetch_phase),
 	.bitplane_fetch_phase_valid(bitplane_fetch_phase_valid),
@@ -521,6 +527,8 @@ agnus AGNUS1
 	.harddis(harddis),
 	.varbeamen(varbeamen),
 	.int3(int3),
+	// Megamiga, November 2026: Fix blitter (Deep Core CD32 background) - backported from
+	// upstream MiSTer commit 8813609.
 	.blit_nasty(blit_nasty),
 	.audio_dmal(audio_dmal),
 	.audio_dmas(audio_dmas),
@@ -668,6 +676,8 @@ denise DENISE1
 	.cck(cck),
 	.reset(reset),
 	.strhor(strhor_denise),
+	// Megamiga, November 2026: denise: handle OCS LORES off-grid fetch ownership -
+	// backported from upstream MiSTer commit 3c8a0ed.
 	.bitplane_dma(bitplane_dma),
 	.bitplane_fetch_phase(bitplane_fetch_phase),
 	.bitplane_fetch_phase_valid(bitplane_fetch_phase_valid),
@@ -760,6 +770,8 @@ minimig_m68k_bridge CPU1
 	.xbs(xbs),
 	.nrdy(gayle_nrdy & rd_cyc),
 	.bls(bls),
+	// Megamiga, November 2026: Fix blitter (Deep Core CD32 background) - backported from
+	// upstream MiSTer commit 8813609.
 	.blit_nasty(blit_nasty),
 	.memory_config(memory_config[3:0]),
 	._as(_cpu_as),

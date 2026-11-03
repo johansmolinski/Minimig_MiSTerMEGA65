@@ -36,6 +36,8 @@ wire  underflow;          // Timer underflow condition
 wire  count;              // Count enable signal
 reg    [2:0] cnt_sync;    // CNT pin synchroniser and edge detect
 wire  cnt_rise;           // CNT pin positive transition
+// Megamiga, November 2026: Fix Risky Woods SFX - backported from upstream MiSTer commit
+// 2bddf21.
 reg    [1:0] start_delay;
 
 always @(posedge clk)
@@ -51,6 +53,9 @@ assign cnt_rise = cnt_sync[1] & ~cnt_sync[2];
 //assign count = tmcr[6] ? tmra_ovf : eclk;
 // Count source selected by CRB bits 6:5 (INMODE)
 assign count = tmcr[6] ? (tmcr[5] ? (tmra_ovf & cnt_sync[1]) : tmra_ovf)
+                       // Megamiga, November 2026: Fix Risky Woods SFX - backported from
+                       // upstream MiSTer commit 2bddf21. Original:
+                       //: (tmcr[5] ? cnt_rise : eclk);
                        : (tmcr[5] ? cnt_rise : (eclk & start_delay[1]));
 
 always @(posedge clk)

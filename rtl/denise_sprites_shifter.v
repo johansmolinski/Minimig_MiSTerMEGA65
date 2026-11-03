@@ -15,6 +15,8 @@ module denise_sprites_shifter
   input  aen,          // address enable
   input  [1:0] address,         // register address input
   input  [8:0] hpos,        // horizontal beam counter
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac.
   input aga,
   input [15:0] fmode,
   input shift,
@@ -36,6 +38,8 @@ reg    [63:0] datlb;    // data register B
 reg    [63:0] shifta;    // shift register A
 reg    [63:0] shiftb;    // shift register B
 reg    [8:0] hstart;    // horizontal start value
+// Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+// from upstream MiSTer commit 16227ac.
 reg    [1:0] hstart_lo;
 reg    armed;        // sprite "armed" signal
 reg    load;        // load shift register signal
@@ -94,6 +98,9 @@ always @(posedge clk)
 always @(posedge clk)
   if (clk7_en) begin
     if (aen && address==CTL)
+      // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL -
+      // backported from upstream MiSTer commit 16227ac. Original:
+      //{attach,hstart[0]} <= {data_in[7],data_in[0]};
       {attach,hstart[0],hstart_lo} <= {data_in[7],data_in[0],aga ? data_in[4:3] : 2'b00};
   end
 
@@ -122,6 +129,9 @@ end
 
 //--------------------------------------------------------------------------------------
 
+// Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL; Fix Denise
+// (black stripes on Flink AGA) - backported from upstream MiSTer commits 16227ac,
+// 4ab0d5f.
 reg  [2:0] load_d;
 wire [3:0] load_s = {load_d, clk7_en & load};
 always @(posedge clk) load_d <= load_s[2:0];
@@ -133,12 +143,20 @@ reg  [1:0] hstart_lo_l = 0;
 
 // sprite shift register
 always @(posedge clk)
+  // Megamiga, November 2026: denise: use the 70 and 35 ns bits of SPRxCTL - backported
+  // from upstream MiSTer commit 16227ac. Original:
+  //if (clk7_en && load) // AMR - load_del) // load new data into shift register
   if (load_s[hstart_lo]) // AMR - load_del) // load new data into shift register
   begin
     shifta[63:0] <= datla[63:0];
     shiftb[63:0] <= datlb[63:0];
+    // Megamiga, November 2026: Fix Denise (black stripes on Flink AGA) - backported
+    // from upstream MiSTer commit 4ab0d5f.
     hstart_lo_l <= hstart_lo;
   end
+  // Megamiga, November 2026: Fix Denise (black stripes on Flink AGA) - backported from
+  // upstream MiSTer commit 4ab0d5f. Original:
+  //else if (shift)
   else if (shift_s[hstart_lo_l])
   begin
     shifta[63:0] <= {shifta[62:0],1'b0};
