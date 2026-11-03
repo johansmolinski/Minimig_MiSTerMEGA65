@@ -414,6 +414,10 @@ reg  [31:0] vbr;
 // (CPU040), which uses them: a forward reference from inside a generate block
 // would declare a new, undriven net in the block's own scope.
 wire       cpu_req = (cpustate != 1);
+// Megamiga, November 2026: TG68K's skipFetch (backport of upstream MiSTer
+// f1af4fe): from the 68010 on, CLR and Scc write their operand without reading
+// it, and TG68K marks that read cycle with skipFetch. 0 while the 68040 runs.
+wire       tg_skip;
 reg  [2:0] cpu_ipl;
 reg        chipready;
 reg        z2ram_ena;
@@ -543,6 +547,7 @@ cpu_inst_p
 
 	.cpu(cpucfg),
 	.busstate(cpustate_p),		// 0: fetch code, 1: no memaccess, 2: read data, 3: write data
+	.skipFetch(tg_skip),        // Megamiga, November 2026 (upstream f1af4fe)
 	.cacr_out(cacr_p),
 	.vbr_out(vbr_p)
 );
@@ -838,6 +843,7 @@ wire  [1:0] t_state;
 wire  [3:0] t_cacr;
 wire [31:0] t_vbr;
 wire        t_wr, t_uds, t_lds, t_rst_out, t_lw;
+wire        t_skip;
 TG68KdotC_Kernel
 #(
 	.sr_read(2),
@@ -865,9 +871,11 @@ tg68k_inst
 	.longword(t_lw),
 	.cpu(cpucfg),
 	.busstate(t_state),
+	.skipFetch(t_skip),         // Megamiga, November 2026 (upstream f1af4fe)
 	.cacr_out(t_cacr),
 	.vbr_out(t_vbr)
 );
+assign tg_skip = t_skip & ~cpu040_sel;
 assign cpu_addr_p  = cpu040_sel ? f_addr    : t_addr;
 assign cpu_dout_p  = cpu040_sel ? f_dout    : t_dout;
 assign cpustate_p  = cpu040_sel ? f_state   : t_state;
@@ -998,6 +1006,8 @@ always @(posedge clk) begin
 end
 
 reg       chipreq;
+reg       skipreq;       // Megamiga, November 2026 (upstream f1af4fe)
+wire      skip_rd = cpu_req & tg_skip & |cpucfg[1:0] & (cpustate == 2'b10) & ~ramsel_i & ~fastchip_selack & ~ext_sel;
 //reg [2:0] cpu_ipl;     // Megamiga: declared above the CPU generate block
 always @(posedge clk) begin
 	// Megamiga, October 2026: + ~ext_sel (IDE board cycles do not touch the chip bus)
@@ -1008,7 +1018,13 @@ always @(posedge clk) begin
 	//chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth) & ext_done);
 	// Megamiga 0.7: + the Gayle
 	//chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_eth | sel_shr) & ext_done);
-	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_gayle | sel_eth | sel_shr) & ext_done);
+	//chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_gayle | sel_eth | sel_shr) & ext_done);
+	// Megamiga, November 2026 (upstream MiSTer f1af4fe): a read TG68K skips does
+	// not go out on the chip bus - reading a write-only custom register writes
+	// $FFFF into it (CLR.W INTREQ raised every interrupt request). skipreq gets
+	// it acknowledged by the chip bus FSM without a bus cycle instead.
+	chipreq <= cpu_req & ~ramsel_i & ~fastchip_selack & ~ext_sel & ~((sel_ide | sel_gayle | sel_eth | sel_shr) & ext_done) & ~skip_rd;
+	skipreq <= skip_rd;
 	cpu_ipl <= ipl_i;
 end
 
@@ -1060,6 +1076,13 @@ always @(negedge clk, negedge reset) begin : chipbus_fsm
 						c_uds <= uds_in;
 						c_lds <= lds_in;
 						stage <= 1;
+					end
+					// Megamiga, November 2026 (upstream MiSTer f1af4fe): a skipped
+					// read ends like a chip bus cycle (ready, stage 3) but leaves
+					// the bus alone; the CPU ignores the data.
+					else if (skipreq) begin
+						ready <= 1;
+						stage <= 3;
 					end
 				1: stage <= 2;
 				2: begin
