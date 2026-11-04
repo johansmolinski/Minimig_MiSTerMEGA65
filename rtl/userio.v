@@ -245,11 +245,19 @@ always @ (posedge clk) begin
 end
 
 // Megamiga, November 2026: userio: no opposite joystick directions at the same time -
-// backported from upstream MiSTer commit 69fb350. Original:
-//wire [15:0] joy1 = joy_ana_en ? {{12{1'b1}}, _joy1[6], 1'b1, _joy1[4], _joy1[5]} : _joy1;
-//wire [15:0] joy2 = joy_ana_en ? {{12{1'b1}}, _joy2[6], 1'b1, _joy2[4], _joy2[5]} : _joy2;
-wire [15:0] joy1 = joy_ana_en ? {{12{1'b1}}, _joy1[6], 1'b1, _joy1[4], _joy1[5]} : {_joy1[15:4], _joy1[3] | ~_joy1[2], _joy1[2], _joy1[1] | ~_joy1[0], _joy1[0]};
-wire [15:0] joy2 = joy_ana_en ? {{12{1'b1}}, _joy2[6], 1'b1, _joy2[4], _joy2[5]} : {_joy2[15:4], _joy2[3] | ~_joy2[2], _joy2[2], _joy2[1] | ~_joy2[0], _joy2[0]};
+// backported from upstream MiSTer commit 69fb350, then TAKEN OUT AGAIN (Megamiga, 2026-11-04):
+// on the MEGA65 these lines are the raw DB9 pins, and a real Amiga mouse sends its quadrature
+// on them - the dmouse counters below decode it from _sjoy/_djoy. "Right" and "left" (bits 0
+// and 1), "down" and "up" (bits 2 and 3) are not opposite directions for a mouse but two
+// quadrature phases of different axes, low together in normal movement; the filter forced
+// bits 1 and 3 high whenever bit 0 or 2 was low, so vertical movement was jerky (seen on the
+// R6, horizontal fine). Opposite directions together are also legitimate input from a
+// controller: a dance mat presses left and right or up and down at once by design. The core
+// has no keyboard joystick, so the filter has nothing to protect against here. MiSTer version:
+//wire [15:0] joy1 = joy_ana_en ? {{12{1'b1}}, _joy1[6], 1'b1, _joy1[4], _joy1[5]} : {_joy1[15:4], _joy1[3] | ~_joy1[2], _joy1[2], _joy1[1] | ~_joy1[0], _joy1[0]};
+//wire [15:0] joy2 = joy_ana_en ? {{12{1'b1}}, _joy2[6], 1'b1, _joy2[4], _joy2[5]} : {_joy2[15:4], _joy2[3] | ~_joy2[2], _joy2[2], _joy2[1] | ~_joy2[0], _joy2[0]};
+wire [15:0] joy1 = joy_ana_en ? {{12{1'b1}}, _joy1[6], 1'b1, _joy1[4], _joy1[5]} : _joy1;
+wire [15:0] joy2 = joy_ana_en ? {{12{1'b1}}, _joy2[6], 1'b1, _joy2[4], _joy2[5]} : _joy2;
 
 // input synchronization of external signals
 // MiSTer2MEGA65 (AExp Amiga 500 port), July 2026: gated with clk7_en. The dmouse
